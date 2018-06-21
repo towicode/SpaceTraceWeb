@@ -3,10 +3,10 @@ from . import models
 from rest_framework import serializers
 
 
-class SessionSerializer(serializers.ModelSerializer):
+class SpaceSessionSerializer(serializers.ModelSerializer):
 
     class Meta:
-        model = models.Session
+        model = models.SpaceSession
         fields = (
             'slug', 
             'created', 

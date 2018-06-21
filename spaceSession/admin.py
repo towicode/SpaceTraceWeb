@@ -1,20 +1,20 @@
 from django.contrib import admin
 from django import forms
-from .models import Session, step_one, step_two, step_three, step_four
+from .models import SpaceSession, step_one, step_two, step_three, step_four
 
-class SessionAdminForm(forms.ModelForm):
+class SpaceSessionAdminForm(forms.ModelForm):
 
     class Meta:
-        model = Session
+        model = SpaceSession
         fields = '__all__'
 
 
-class SessionAdmin(admin.ModelAdmin):
-    form = SessionAdminForm
+class SpaceSessionAdmin(admin.ModelAdmin):
+    form = SpaceSessionAdminForm
     list_display = ['slug', 'created', 'last_updated']
     readonly_fields = ['slug', 'created', 'last_updated']
 
-admin.site.register(Session, SessionAdmin)
+admin.site.register(SpaceSession, SpaceSessionAdmin)
 
 
 class step_oneAdminForm(forms.ModelForm):
