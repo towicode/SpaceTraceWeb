@@ -3,6 +3,8 @@ from spaceSession.models import *
 from django.views.decorators.csrf import csrf_exempt
 from django.template import loader
 from django.http import HttpResponse
+import json
+
 
 def viewSession(request, id):
     """ Display the home page """
@@ -59,43 +61,44 @@ def page_update_get(request, step, my_session):
     if (step == 3):
         b = {
             "step": 3,
-            "image": my_session.step_three.data.image,
-            "label": my_session.step_three.data.label,
-            "info": my_session.step_three.data.info,
+            "image": my_session.step_three.data['image'],
+            "label": my_session.step_three.data['label'],
+            "info": my_session.step_three.data['info'],
         }
-    return JsonResponse(b)
-    
-    
+        return JsonResponse(b)
+        
 
 def page_update_post(request, step, my_session):
     """ Handes all post requests for page_update """
-
     #   Step one the users posts the files to upload
+    request_body = json.loads(request.body)
     if (step == 1):
-        if ("files_to_upload" not in request.POST or "arguments" not in request.post ):
+        if ("files_to_upload" not in request_body or "arguments" not in request_body ):
             return HttpResponseBadRequest("Invalid page_update_post step1")
         #   update step2 and complete step1
-        my_session.step_two.arguments = request.POST.arguments
-        my_session.step_two.files_to_upload = request.POST.files_to_upload
+        dog = json.dumps(dict(request.POST))
+        my_session.step_two.arguments = request_body['arguments']
+        my_session.step_two.files_to_upload = request_body['files_to_upload']
         my_session.step_two.save()
 
         my_session.step_one.completed = True
         my_session.step_one.save()
 
-        return JsonResponse("OK")
+        return JsonResponse({"valid": "ok"})
 
     elif (step == 3):
-        if ("data" not in requst.POST):
+        if ("data" not in request_body):
             return HttpResponseBadRequest("Invalid page_update_post step3")
         
         # update step4 and complete step3
-        my_session.step_four.data = request.POST.data
+        my_session.step_four.data = request_body['data']
         my_session.step_four.save()
 
         my_session.step_three.completed = True
         my_session.step_three.save()
 
-        return JsonResponse("OK")
+        return JsonResponse({"valid": "ok"})
+
 
 
 
@@ -132,10 +135,13 @@ def helper_post(request, my_session):
 
     Specifically if post is supposed to be step one or step three"""
 
-    if ("image" in request.POST):
-        return step_three_helper(request, my_session)
-    elif("finish_instructions" in request.POST):
-        return step_five_heler(request, my_session)
+    request_body = json.loads(request.body)
+
+
+    if ("image" in request_body):
+        return step_three_helper(request_body, my_session)
+    elif("finish_instructions" in request_body):
+        return step_five_heler(request_body, my_session)
 
 def helper_get(request, step, my_session):
     """ helper function to detemine get instructions
@@ -170,39 +176,50 @@ def helper_get(request, step, my_session):
 
 
 
-def step_three_helper(request, my_session):
+def step_three_helper(request_body, my_session):
     """ Step three post function
 
     sets the image, label, and info paramaters for
     step three """
 
-    if ("image" not in request.POST or "label" not in request.POST or "info" not in request.POST):
+    if ("image" not in request_body or "label" not in request_body or "info" not in request_body):
         return HttpResponseBadRequest("Invalid step three post")
 
     b = {
-        'image': request.POST.image,
-        'label': request.POST.label,
-        'info': request.POST.info
+        'image': request_body['image'],
+        'label': request_body['label'],
+        'info': request_body['info']
     }
+    my_session.step_two.completed = True
+    my_session.step_two.save()
 
     my_session.step_three.data = b
     my_session.step_three.save()
 
-def step_five_heler(request, my_session):
+    return JsonResponse({"valid": "ok"})
+
+
+def step_five_heler(request_body, my_session):
     """ step five post function
 
     sets the finish instructions per after the job
     is absolutely complete """
 
-    if ("finish_instructions" not in request.POST):
+    if ("finish_instructions" not in request_body):
         return HttpResponseBadRequest("Invalid step three post")
     
     b = {
-        'finish_instructions' : request.POST.finish_instructions
+        'finish_instructions' : request_body['finish_instructions']
     }
+
+    my_session.step_four.completed = True
+    my_session.step_four.save()
 
     my_session.step_five.data = b
     my_session.step_five.save()
+
+    return JsonResponse({"valid": "ok"})
+
 
 
 @csrf_exempt
