@@ -23,6 +23,8 @@ class SpaceSession(models.Model):
     step_two = models.ForeignKey('step_two', on_delete=models.CASCADE)
     step_three = models.ForeignKey('step_three', on_delete=models.CASCADE)
     step_four = models.ForeignKey('step_four', on_delete=models.CASCADE)
+    step_five = models.ForeignKey('step_five', on_delete=models.CASCADE)
+
 
     class Meta:
         ordering = ('-created',)
@@ -92,6 +94,7 @@ class step_three(models.Model):
     slug = extension_fields.AutoSlugField(populate_from='pk', blank=True)
     created = models.DateTimeField(auto_now_add=True, editable=False)
     last_updated = models.DateTimeField(auto_now=True, editable=False)
+    data = JSONField(default=dict)
     completed = models.BooleanField(default=False)
 
 
@@ -131,5 +134,28 @@ class step_four(models.Model):
 
     def get_update_url(self):
         return reverse('spaceSession_step_four_update', args=(self.slug,))
+
+class step_five(models.Model):
+
+    # Fields
+    slug = extension_fields.AutoSlugField(populate_from='pk', blank=True)
+    created = models.DateTimeField(auto_now_add=True, editable=False)
+    last_updated = models.DateTimeField(auto_now=True, editable=False)
+    data = JSONField(default=dict)
+    completed = models.BooleanField(default=False)
+
+
+    class Meta:
+        ordering = ('-created',)
+
+    def __unicode__(self):
+        return u'%s' % self.slug
+
+    def get_absolute_url(self):
+        return reverse('spaceSession_step_five_detail', args=(self.slug,))
+
+
+    def get_update_url(self):
+        return reverse('spaceSession_step_five_update', args=(self.slug,))
 
 

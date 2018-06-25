@@ -15,10 +15,17 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
+from django.conf import settings
+from django.conf.urls.static import static
 
 from spaceSession.views import *
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/sessions', spaceSessionCreate)
-]
+    path('api/sessions', spaceSessionCreate),
+    path('api/sessions/<int:id>', spaceSessionHelper),
+    path('', index),
+    path('view/<int:id>', viewSession),
+    path('api/updates/<int:id>', pageUpdates),
+] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+
