@@ -110,8 +110,6 @@ def page_update_post(request, step, my_session):
         return JsonResponse({"valid": "ok"})
 
 
-
-
 @csrf_exempt
 def spaceSessionHelper(request, id):
     """ Handles all requests between SpaceTraceWeb and SpaceTraceHPC """
@@ -146,7 +144,6 @@ def helper_post(request, my_session):
     Specifically if post is supposed to be step one or step three"""
 
     request_body = json.loads(request.body)
-
 
     if ("image" in request_body):
         return step_three_helper(request_body, my_session)
