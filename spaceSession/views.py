@@ -20,7 +20,7 @@ def index(request):
     context = {}
     return HttpResponse(template.render(context, request))
 
-
+@csrf_exempt
 def pageUpdates(request, id):
     """ Handles all ccommunications between Web View and Django"""
 
@@ -64,6 +64,16 @@ def page_update_get(request, step, my_session):
             "image": my_session.step_three.data['image'],
             "label": my_session.step_three.data['label'],
             "info": my_session.step_three.data['info'],
+        }
+        return JsonResponse(b)
+    
+    if (step == 4):
+        return JsonResponse({"step": 4})
+
+    if (step == 5):
+        b = {
+            "step": 5,
+            "finish_instructions": my_session.step_five.data['finish_instructions']
         }
         return JsonResponse(b)
         

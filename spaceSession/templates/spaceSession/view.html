@@ -110,9 +110,9 @@
 
                 <div rv-if="data.step | = 1">
                     <div class="mdl-components__warning"><b>Note: </b>
-                    instructions go here</div>
+                    Please upload any additional files and set program arguments here</div>
                         <div class="mdl-textfield mdl-js-textfield mdl-textfield--floating-label">
-                            <input class="mdl-textfield__input" type="text" />
+                            <input rv-value="data.arguments" class="mdl-textfield__input" type="text" />
                             <label class="mdl-textfield__label">Additional Arguments</label>
                         </div> <br/>
                         <div class="mdl-textfield mdl-js-textfield mdl-textfield--file">
@@ -133,11 +133,15 @@
                 </div>
 
                 <div rv-if="data.step | = 3">
-                    <img class="astro_img" id="astro" src="http://via.placeholder.com/350x150" alt="">
+                    <div rv-html="data.img">
+                    </div>
                     <div>
                         <label for="my_label">Label</label>
                         <input type="text" name="" id="my_label">
                     </div>
+                    <button type="submit" onclick="submitStepThree()" class="mdl-button mdl-js-button mdl-button--raised mdl-js-ripple-effect">
+                        Submit
+                    </button>
                 </div>
 
                 <div rv-if="data.step | = 4">

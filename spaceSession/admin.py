@@ -27,7 +27,6 @@ class step_oneAdminForm(forms.ModelForm):
 class step_oneAdmin(admin.ModelAdmin):
     form = step_oneAdminForm
     list_display = ['slug', 'created', 'last_updated', 'completed']
-    readonly_fields = ['slug', 'created', 'last_updated', 'completed']
 
 admin.site.register(step_one, step_oneAdmin)
 
@@ -42,7 +41,6 @@ class step_twoAdminForm(forms.ModelForm):
 class step_twoAdmin(admin.ModelAdmin):
     form = step_twoAdminForm
     list_display = ['slug', 'created', 'last_updated', 'completed', 'files_to_upload', 'arguments']
-    readonly_fields = ['slug', 'created', 'last_updated', 'completed', 'files_to_upload', 'arguments']
 
 admin.site.register(step_two, step_twoAdmin)
 
@@ -57,7 +55,6 @@ class step_threeAdminForm(forms.ModelForm):
 class step_threeAdmin(admin.ModelAdmin):
     form = step_threeAdminForm
     list_display = ['slug', 'created', 'last_updated', 'completed']
-    readonly_fields = ['slug', 'created', 'last_updated', 'completed']
 
 admin.site.register(step_three, step_threeAdmin)
 
@@ -72,7 +69,6 @@ class step_fourAdminForm(forms.ModelForm):
 class step_fourAdmin(admin.ModelAdmin):
     form = step_fourAdminForm
     list_display = ['slug', 'created', 'last_updated', 'data', 'completed']
-    readonly_fields = ['slug', 'created', 'last_updated', 'data', 'completed']
 
 admin.site.register(step_four, step_fourAdmin)
 
