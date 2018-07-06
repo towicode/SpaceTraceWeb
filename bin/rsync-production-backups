@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+## Requires your .ssh/config to contain entry for 'hugo' ie:
+#
+# Host ashline
+#   Hostname ashline.arl.arizona.edu
+#   Port 22
+#   User franks
+#   IdentityFile ~/.ssh/id_rsa
+#   IdentitiesOnly yes
+#
+#  Also this requires you to run the dbdump script on production to generate the backups.
+
+ABSOLUTE_PATH=$(cd `dirname "${BASH_SOURCE[0]}"` && pwd)/`basename "${BASH_SOURCE[0]}"`
+ABSOLUTE_DIR=$(cd `dirname "${BASH_SOURCE[0]}"` && pwd)
+
+rsync -a ashline:~/backups/ashline-prod/ ${ABSOLUTE_DIR}/../backups

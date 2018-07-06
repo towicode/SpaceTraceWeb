@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# Hagan Franks 2016-09-13 franks ȦŦ email Ḓ0Ŧ arizona Ḓ0Ŧ edu
+# DEBUG=true
+# exit script upon error
+set -e
+# [ -n "$DEBUG" ] && set -x
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+
+## setup exit trap
+SRC_SCRIPT=${script_dir}/lib/setup-exit-trap.sh
+SRC_NUM=1
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    exit 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  exit 1
+fi
+
+## setup required binaries
+SRC_SCRIPT=${script_dir}/lib/setup-binary-vars.sh
+SRC_NUM=2
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    exit 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  exit 1
+fi
+
+## load project .env file
+SRC_SCRIPT=${script_dir}/lib/load-env-vars.sh
+SRC_NUM=3
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    exit 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  exit 1
+fi
+
+## add ask-function
+SRC_SCRIPT=${script_dir}/lib/functions.sh
+SRC_NUM=4
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    exit 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  exit 1
+fi
+
+# Check and make sure we're not inside an active virtual environment
+[ ! -z "$VIRTUAL_ENV" ] && echo "ERROR-6: Current active virtualenv, please deactivate 1st." && exit 1;
+
+# Verify that PROJECT_PATH is defined
+[ -z "${PROJECT_PATH+x}" ] && echo "ERROR-7: .env does not define our PROJECT_PATH environment variable!" && exit 1
+
+# Verify that PROJECT_NAME is defined
+[ -z "${PROJECT_NAME+x}" ] && echo "ERROR-8: .env does not define our PROJECT_NAME environment variable!" && exit 1
+
+# Verify that DEPLOY_TYPE is defined
+[ -z "${DEPLOY_TYPE+x}" ] && echo "ERROR-9: .env does not define our DEPLOY_TYPE environment variable!" && exit 1
+
+# Check project path exists
+[ ! -d  "${PROJECT_PATH}" ] && echo "ERROR-10: ${PROJECT_PATH} does not exist!" && exit 1
+
+
+# 1st check if we have a symbolic link in our $WORKON_HOME
+if [ -h "${WORKON_HOME}/${PROJECT_NAME}-${DEPLOY_TYPE}" ] || [ -d "${WORKON_HOME}/${PROJECT_NAME}-${DEPLOY_TYPE}" ]; then
+  echo "ERROR-11: Pre-existing virtualenv *symlink* or *dir* at destination: ${WORKON_HOME}/${PROJECT_NAME}-${DEPLOY_TYPE}!"
+  exit 1
+fi
+
+# Verify that DJANGO_ENV_PATH is defined
+if [ -z "${DJANGO_ENV_PATH+x}" ]; then
+  echo "ERROR-12: .env does not define the DJANGO_ENV_PATH variable!"
+  exit 1
+fi
+
+# Create the destination envs directory if not yet
+DJANGO_ENV_DIR=$($DIRNAME ${DJANGO_ENV_PATH})
+if [ ! -d "${DJANGO_ENV_DIR}" ]; then
+  mkdir -p ${DJANGO_ENV_DIR}
+fi
+
+# Verify that our project envs folder wasn't already created
+if [ -d "${DJANGO_ENV_DIR}/${PROJECT_NAME}-${DEPLOY_TYPE}" ]; then
+  echo "ERROR-13: destination exists! $DJANGO_ENV_DIR/${PROJECT_NAME}-${DEPLOY_TYPE}"
+  exit 1
+fi
+
+if [ -z ${SHELL+x} ]; then
+  echo "ERROR-14: .env does not define the SHELL variable!"
+  exit 1
+fi
+
+# Depending on what shell we're using, load that and create the virtualenv!
+$SHELL -c ". ${VIRTUALENVWRAPPER_SCRIPT}; export WORKON_HOME=$DJANGO_ENV_DIR; mkvirtualenv --python=${PYTHON_PATH} ${PROJECT_NAME}-${DEPLOY_TYPE}"
+
+# Link our newly minted virtualenv folder
+if [ -d "${DJANGO_ENV_PATH}" ]; then
+  ln -s ${DJANGO_ENV_PATH} ${WORKON_HOME}/${PROJECT_NAME}-${DEPLOY_TYPE}
+else
+  echo "ERROR-15: Couldn't link project envs folder to our own virtualenv!"
+  exit 1
+fi
+
+if [ -z "${PYTHON_REQUIREMENT_FILE+x}" ]; then
+  echo "ERROR-16: .env does not define the PYTHON_REQUIREMENT_FILE variable!"
+  exit 1
+fi
+
+[ ! -f ${PYTHON_REQUIREMENT_FILE} ] && echo "ERROR-13: the requirements file is missing: $PYTHON_REQUIREMENT_FILE!" && exit 1
+
+# Install pip modules! (Use users current active shell)
+$SHELL -c ". ${VIRTUALENVWRAPPER_SCRIPT}; workon ${PROJECT_NAME}-${DEPLOY_TYPE}; TMP=$HOME/tmp pip install pip -U"
+$SHELL -c ". ${VIRTUALENVWRAPPER_SCRIPT}; workon ${PROJECT_NAME}-${DEPLOY_TYPE}; TMP=$HOME/tmp pip install -r $PYTHON_REQUIREMENT_FILE"
+if [ -n "${PYTHON_REQUIREMENT_NODEPS_FILE+x}" ]; then
+  $SHELL -c ". ${VIRTUALENVWRAPPER_SCRIPT}; workon ${PROJECT_NAME}-${DEPLOY_TYPE}; TMP=$HOME/tmp pip install --no-deps -r $PYTHON_REQUIREMENT_NODEPS_FILE"
+fi
+
+PYTHON_REQUIREMENT_FILENAME="$(${BASENAME} $PYTHON_REQUIREMENT_FILE)"
+OS_REQUIREMENTS_FILE="$(${DIRNAME} $PYTHON_REQUIREMENT_FILE)/${PYTHON_REQUIREMENT_FILENAME%.*}-$OSCLASS.txt"
+if [ -f $OS_REQUIREMENTS_FILE ]; then
+  $SHELL -c ". ${VIRTUALENVWRAPPER_SCRIPT}; workon ${PROJECT_NAME}-${DEPLOY_TYPE}; TMP=$HOME/tmp pip install -r $OS_REQUIREMENTS_FILE"
+fi
+
+mv ${DJANGO_ENV_PATH}/bin/postactivate ${DJANGO_ENV_PATH}/bin/postactivate.orig
+mv ${DJANGO_ENV_PATH}/bin/postdeactivate ${DJANGO_ENV_PATH}/bin/postdeactivate.orig
+# setup a local postactivate script
+if [ ! -z ${LOCAL_POSTACTIVATE+x} ] && [ ! -z ${SOURCE_POSTACTIVATE+x} ] && [ -f ${SOURCE_POSTACTIVATE} ]; then
+  cp ${SOURCE_POSTACTIVATE} ${LOCAL_POSTACTIVATE}
+  chmod +x ${LOCAL_POSTACTIVATE}
+elif [ ! -z ${LOCAL_POSTACTIVATE+x} ]; then
+  cp ${DJANGO_ENV_PATH}/bin/postactivate.orig ${LOCAL_POSTACTIVATE}
+  chmod +x ${LOCAL_POSTACTIVATE}
+  echo "main_project_help" >> ${LOCAL_POSTACTIVATE}
+fi
+
+# setup a local postdeactivate script
+if [ ! -z ${LOCAL_POSTDEACTIVATE+x} ] && [ ! -z ${SOURCE_POSTDEACTIVATE+x} ] && [ -f ${SOURCE_POSTDEACTIVATE} ]; then
+  cp ${SOURCE_POSTDEACTIVATE} ${LOCAL_POSTDEACTIVATE}
+  chmod +x ${LOCAL_POSTDEACTIVATE}
+elif [ ! -z ${LOCAL_POSTDEACTIVATE+x} ]; then
+  cp ${DJANGO_ENV_PATH}/bin/postdeactivate.orig ${LOCAL_POSTDEACTIVATE}
+  chmod +x ${LOCAL_POSTDEACTIVATE}
+fi
+
+# # Insert our custom project postactivate/postdeactivate scripts
+ln -s ${PROJECT_POSTACTIVATE} ${DJANGO_ENV_PATH}/bin/postactivate
+ln -s ${PROJECT_POSTDEACTIVATE} ${DJANGO_ENV_PATH}/bin/postdeactivate
+
+echo "Initializing Log File"
+LOG_FILE_DIR=`dirname ${LOG_FILE}`
+if [ ! -d ${LOG_FILE_DIR} ]; then
+  mkdir -p ${LOG_FILE_DIR}
+  touch ${LOG_FILE}
+  chown ${FILE_OWNER}:${FILE_GROUP} ${LOG_FILE_DIR}
+  chown ${FILE_OWNER}:${FILE_GROUP} ${LOG_FILE}
+  chmod g+w ${LOG_FILE_DIR} ${LOG_FILE}
+elif [[ ! -f ${LOG_FILE} ]]; then
+  touch ${LOG_FILE}
+  chown ${FILE_OWNER}:${FILE_GROUP} ${LOG_FILE}
+  chmod g+w ${LOG_FILE}
+fi
+
+echo "Finished creating virtualenv ${PROJECT_NAME}-${DEPLOY_TYPE}"
+echo "To activate, type: 'workon ${PROJECT_NAME}-${DEPLOY_TYPE}'"

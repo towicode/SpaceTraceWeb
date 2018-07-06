@@ -1,0 +1,203 @@
+#!/usr/bin/zsh
+# This hook is sourced after this virtualenv is activated.
+
+if [ -z ${script_dir+x} ]; then
+  echo "ERROR: script_dir wasn't set!"
+  return 1
+fi
+
+if [[ -z "$(hostname -s)" ]]; then
+  HOSTNAME="localhost"
+else
+  HOSTNAME="$(hostname -s)"
+fi
+
+function backup_project_db() {
+  check_env_config_loaded || return 1
+  curdatetime=$(date +"%Y-%m-%d.%H.%M")
+  if [[ -z ${DJANGO_DB_NAME+x} ]]; then
+    return
+  fi
+
+  if [[ ! -d "$HOME/backups/${HOSTNAME}/${PROJECT_NAME}-${DEPLOY_TYPE}" ]]; then
+    mkdir -p "$HOME/backups/${HOSTNAME}/${PROJECT_NAME}-${DEPLOY_TYPE}"
+  fi
+
+  PGPASSWORD=${ADMIN_DB_PASS} ${PGDUMP} \
+  --host=${DJANGO_DB_HOST} \
+  --port=${DJANGO_DB_PORT} \
+  --username=${ADMIN_DB_USER} \
+  --no-owner \
+  --no-acl \
+  --clean --if-exists \
+  --create \
+  --format=c \
+  --blobs \
+  -f $HOME/backups/${HOSTNAME}/${PROJECT_NAME}-${DEPLOY_TYPE}/${curdatetime}-${PROJECT_NAME}-${DEPLOY_TYPE}-db.dump \
+  ${DJANGO_DB_NAME} && { 
+    ls -lah $HOME/backups/${HOSTNAME}/${PROJECT_NAME}-${DEPLOY_TYPE}/${curdatetime}-${PROJECT_NAME}-${DEPLOY_TYPE}-db.dump | tr -s ' ' | cut -d ' ' -f 5,9
+  } || {
+    echo "ERROR: backup_project_db failed to backup ${DJANGO_DB_NAME} database!!"
+    return
+  }
+}
+
+function backup_static_folder() {
+  check_env_config_loaded || return 1
+  curdatetime=$(date +"%Y-%m-%d.%H.%M")
+  if [[ ! -d ${STATIC_ROOT} ]]; then
+    echo "Error: No static root: ${STATIC_ROOT} folder!"
+    return
+  fi
+  tar -cvPfz ${BACKUP_PATH}/${curdatetime}-${PROJECT_NAME}-${DEPLOY_TYPE}-static.tar.gz ${STATIC_ROOT}
+}
+
+function backup_media_folder() {
+  check_env_config_loaded || return 1
+  curdatetime=$(date +"%Y-%m-%d.%H.%M")
+  if [[ ! -d ${MEDIA_ROOT} ]]; then
+    echo "Error: No media root: ${MEDIA_ROOT} folder!"
+    return
+  fi
+  tar -cvPfz ${BACKUP_PATH}/${curdatetime}-${PROJECT_NAME}-${DEPLOY_TYPE}-media.tar.gz ${MEDIA_ROOT}
+}
+
+function restore_project_db() {
+    check_env_config_loaded || return 1
+
+    if [[ -z "$1" ]]; then
+      LATEST_BACKUP=($(find ${PROJECT_PATH}/backups -type f -name "*${PROJECT_NAME}-${DEPLOY_TYPE}-db.dump" -exec basename {} \; | sort -r | tr '\n' ' ' | cut -d' ' -f 1))
+      RESTORE_FILE="${PROJECT_PATH}/backups/${LATEST_BACKUP}"
+      BACKUPS_CNTR=$(find ${script_dir}/../backups -type f -name "*${PROJECT_NAME}-${DEPLOY_TYPE}-db.dump" -print0 | xargs -0 -I{} echo {} | wc -l)
+    elif [[ -f "$1" ]]; then
+      RESTORE_FILE=$1
+      BACKUPS_CNTR=1
+    elif [[ -f "${PROJECT_PATH}/backups/$1" ]]; then
+      RESTORE_FILE=${PROJECT_PATH}/backups/$1
+      BACKUPS_CNTR=1
+    else
+      echo "ERROR: Could not load $1."
+      exit
+    fi
+
+    if [[ ${BACKUPS_CNTR} -ne 0 ]]; then
+      echo "!!!!ABOUT TO DESTORY database '${DJANGO_DB_NAME}'!!!!"
+      echo "Restoring from : ${RESTORE_FILE}"
+      if ask "Be VERY sure you want to wipe the database '${DJANGO_DB_NAME}'" N; then
+        PGPASSWORD=${ADMIN_DB_PASS} ${DROPDB} --username=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} ${DJANGO_DB_NAME}
+        PGPASSWORD=${ADMIN_DB_PASS} ${CREATEDB} --username=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -O ${ADMIN_DB_USER} -E UTF8 ${DJANGO_DB_NAME}
+        # I don't think restore from pg_dump's include the extension setup part...
+        PGPASSWORD=${ADMIN_DB_PASS} ${PSQL} --username=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -c "CREATE EXTENSION IF NOT EXISTS hstore WITH SCHEMA public;" ${DJANGO_DB_NAME}
+        PGPASSWORD=${ADMIN_DB_PASS} ${PSQL} --username=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -c "CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA public;" ${DJANGO_DB_NAME}
+        # pg_restore command
+        PGPASSWORD=${ADMIN_DB_PASS} ${PGRESTORE} --username=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} \
+        --schema=public \
+        --no-owner \
+        --format=c \
+        --dbname=${DJANGO_DB_NAME} \
+        --jobs=4 ${RESTORE_FILE} && {
+          echo "Restored ${DJANGO_DB_NAME} database"; } || { echo "ERROR: failed to restore ${DJANGO_DB_NAME} database"
+          return
+        }
+
+        PGPASSWORD=${ADMIN_DB_PASS} ${VACUUMDB} --host=${DJANGO_DB_HOST} --username=${ADMIN_DB_USER} --port=${DJANGO_DB_PORT} -z -f ${DJANGO_DB_NAME}
+        PGPASSWORD=${ADMIN_DB_PASS} ${PSQL} --username=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -c "GRANT ALL PRIVILEGES ON DATABASE ${DJANGO_DB_NAME} TO ${DJANGO_DB_USER};"
+
+        # SERIOUSLY, NOT GOOD POSTGRESQL!!
+        ALTER_TABLE_CNTR=0
+        for tbl in `PGPASSWORD=${ADMIN_DB_PASS} ${PSQL} --user=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -qAt -c "select tablename from pg_tables where schemaname = 'public';" ${DJANGO_DB_NAME}`; do
+          PGPASSWORD=${ADMIN_DB_PASS} ${PSQL} --username=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -c "alter table \"$tbl\" owner to ${DJANGO_DB_USER}" ${DJANGO_DB_NAME} > /dev/null
+          if [[ $? -eq 0 ]]; then
+            ALTER_TABLE_CNTR=$((ALTER_TABLE_CNTR+1))
+          fi
+        done
+        echo "ALTER TABLE x ${ALTER_TABLE_CNTR}"
+        # REALLY!?!? COME ON!!!
+        ALTER_SEQUENCE_CNTR=0
+        for tbl in `PGPASSWORD=${ADMIN_DB_PASS} ${PSQL} --username=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -qAt -c "select sequence_name from information_schema.sequences where sequence_schema = 'public';" ${DJANGO_DB_NAME}` ; do
+            PGPASSWORD=${ADMIN_DB_PASS} ${PSQL} --username=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -c "alter table \"$tbl\" owner to ${DJANGO_DB_USER}" ${DJANGO_DB_NAME} > /dev/null
+            if [[ $? -eq 0 ]]; then
+                ALTER_SEQUENCE_CNTR=$((ALTER_SEQUENCE_CNTR+1))
+            fi
+        done
+        # WTF!
+        echo "ALTER SEQUENCE x ${ALTER_SEQUENCE_CNTR}"
+        ALTER_SCHEMA_CNTR=0
+        for tbl in `PGPASSWORD=${ADMIN_DB_PASS} ${PSQL} --username=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -qAt -c "select table_name from information_schema.views where table_schema = 'public';" ${DJANGO_DB_NAME}` ; do
+            PGPASSWORD=${ADMIN_DB_PASS} ${PSQL} --username=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -c "alter table \"$tbl\" owner to ${DJANGO_DB_USER}" ${DJANGO_DB_NAME} > /dev/null
+            if [[ $? -eq 0 ]]; then
+                ALTER_SCHEMA_CNTR=$((ALTER_SCHEMA_CNTR+1))
+            fi
+        done
+        echo "ALTER SCHEMA x ${ALTER_SCHEMA_CNTR}"
+
+        PGPASSWORD=${ADMIN_DB_PASS} ${PSQL} --username=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} --dbname=${DJANGO_DB_NAME} -c "GRANT ALL ON SCHEMA public TO public;"
+      fi
+    else
+      echo "No files to restore from in: ${PROJECT_PATH}/backups/????-??-??.??.??-${PROJECT_NAME}-${DEPLOY_TYPE}-db.dump"
+    fi
+}
+
+function drop_project_db() {
+  check_env_config_loaded || return 1
+  echo "YOU ARE ABOUT TO DO SOMETHING THAT WILL GET YOU FIRED! ARE YOU ABSOLUTELY SURE YOU KNOW WHAT YOU ARE DOING?"
+  if ask "Are you sure you want to delete '${DJANGO_DB_NAME}' database?" N; then
+    echo "WARNING!!! Make sure this is not production and you know what you are doing!"
+    echo "Run command manually: dropdb --username=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} ${DJANGO_DB_NAME}"
+  fi
+  #########################################################
+  # !!!! IF YOU ARE RUNNING THIS ON DEVELOPMENT ONLY !!!! #
+  # BEWARE!! This could cause you to loose your job if    #
+  # any production data is lost!                          #
+  #########################################################
+  # if ask "Drop database '${DJANGO_DB_NAME}'?" N; then
+  #   PGPASSWORD=${ADMIN_DB_PASS} ${DROPDB} --username=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} ${DJANGO_DB_NAME}
+  # fi
+}
+
+function create_project_db() {
+  check_env_config_loaded || return 1
+  if ask "Create database '${DJANGO_DB_NAME}'?" N; then
+    PGPASSWORD=${ADMIN_DB_PASS} ${CREATEDB} --username=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -O ${DJANGO_DB_USER} -E UTF8 ${DJANGO_DB_NAME}
+    ## Might be best to setup the extensions from our create db script
+    PGPASSWORD=${ADMIN_DB_PASS} ${PSQL} --username=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -c "CREATE EXTENSION IF NOT EXISTS hstore WITH SCHEMA public;" ${DJANGO_DB_NAME}
+    PGPASSWORD=${ADMIN_DB_PASS} ${PSQL} --username=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -c "CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA public;" ${DJANGO_DB_NAME}
+  fi
+}
+
+function create_project_user(){
+  check_env_config_loaded || return 1
+  if ask "Create '${DJANGO_DB_USER}' role?" N; then
+    PGPASSWORD=${ADMIN_DB_PASS} ${PSQL} --username=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -c "CREATE USER ${DJANGO_DB_USER} WITH PASSWORD '${DJANGO_DB_PASS}';" -d ${ADMIN_DB_NAME}
+    PGPASSWORD=${ADMIN_DB_PASS} ${PSQL} --username=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -c "ALTER USER ${DJANGO_DB_USER} CREATEDB;"
+  fi
+}
+
+function drop_project_user(){
+  check_env_config_loaded || return 1
+  if ask "Drop '${DJANGO_DB_USER}' role from postgres?" N; then
+    PGPASSWORD=${ADMIN_DB_PASS} ${PSQL} --username=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -c "DROP USER IF EXISTS ${DJANGO_DB_USER};" -d ${ADMIN_DB_NAME}
+  fi
+}
+
+function prj_pyclean(){
+  # clears out .pyc/.pyo and __pycache__ files...
+  find ${PROJECT_PATH} -regex '.*\(__pycache__\|\.py[co]\)' -delete
+}
+
+function project_help(){
+  check_env_config_loaded || return 1
+  main_project_help
+  echo " project_help        -- This help message"
+  echo " backup_project_db     -- backup database: ${DJANGO_DB_NAME} -> ~/backups/local/${PROJECT_NAME}-${DEPLOY_TYPE}"
+  echo " backup_static_folder  -- backup static folder: ${STATIC_ROOT} -> ~/backups/local/${PROJECT_NAME}-${DEPLOY_TYPE}"
+  echo " backup_media_folder   -- backup media folder: ${MEDIA_ROOT} -> ~/backups/local/${PROJECT_NAME}-${DEPLOY_TYPE}"
+  echo " restore_project_db    -- restore database: ${DJANGO_DB_NAME} from ${PROJECT_PATH}/backups/*.dump"
+  echo " drop_project_db       -- drops database: ${DJANGO_DB_NAME}"
+  echo " create_project_db     -- create database: ${DJANGO_DB_NAME}"
+  echo " create_project_user   -- create database user: ${DJANGO_DB_USER}"
+  echo " drop_project_user     -- drop database user: ${DJANGO_DB_USER}"
+  echo " prj_pyclean               -- remove py[co] objects from project"
+}
+
+project_help

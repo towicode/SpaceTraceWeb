@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# Hagan Franks 2016-09-13 franks ȦŦ email Ḓ0Ŧ arizona Ḓ0Ŧ edu
+DEBUG=false
+# exit script upon error
+set -e
+# [ -n "$DEBUG" ] && set -x
+
+# If no .env found, exit!
+EXIT_ON_NO_ENV=0
+#_SKIP_VIRTUALENVWRAPPER_CHECK=true
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+
+## setup exit trap
+SRC_SCRIPT=${script_dir}/lib/setup-exit-trap.sh
+SRC_NUM=1
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    exit 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  exit 1
+fi
+
+## setup required binaries
+SRC_SCRIPT=${script_dir}/lib/setup-binary-vars.sh
+SRC_NUM=2
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    exit 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  exit 1
+fi
+
+## load project .env file
+SRC_SCRIPT=${script_dir}/lib/load-env-vars.sh
+SRC_NUM=3
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    exit 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  exit 1
+fi
+
+## add ask-function
+SRC_SCRIPT=${script_dir}/lib/functions.sh
+SRC_NUM=4
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    exit 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  exit 1
+fi
+
+# Check and make sure we're not inside an active virtual environment
+[ ! -z "$VIRTUAL_ENV" ] && echo "ERROR-6: Current active virtualenv, please deactivate 1st." && exit 1;
+
+# Verify that PROJECT_PATH is defined
+[ -z "${PROJECT_PATH+x}" ] && echo "ERROR-7: .env does not define our PROJECT_PATH environment variable!" && exit 1
+
+# Verify that PROJECT_NAME is defined
+[ -z "${PROJECT_NAME+x}" ] && echo "ERROR-8: .env does not define our PROJECT_NAME environment variable!" && exit 1
+
+# Verify that DEPLOY_TYPE is defined
+[ -z "${DEPLOY_TYPE+x}" ] && echo "ERROR-9: .env does not define our DEPLOY_TYPE environment variable!" && exit 1
+
+# Check project path exists
+[ ! -d  "${PROJECT_PATH}" ] && echo "ERROR-10: ${PROJECT_PATH} does not exist!" && exit 1
+
+
+# 1st check if we have a symbolic link in our $WORKON_HOME
+# if [ ! -h "${WORKON_HOME}/${PROJECT_NAME}-${DEPLOY_TYPE}" ] && [ ! -d "${WORKON_HOME}/${PROJECT_NAME}-${DEPLOY_TYPE}" ]; then
+#   echo "ERROR-11: No virtualenv *symlink* or *dir* at destination: ${WORKON_HOME}/${PROJECT_NAME}-${DEPLOY_TYPE}!"
+#   exit 1
+# fi
+
+# Verify that DJANGO_ENV_HOME is defined
+[ -z "${DJANGO_ENV_HOME+x}" ] && echo "ERROR-11a: .env does not define the DJANGO_ENV_HOME variable!" && exit 1
+
+# Verify that DJANGO_ENV_NAME is defined
+[ -z "${DJANGO_ENV_NAME+x}" ] && echo "ERROR-11b: .env does not define the DJANGO_ENV_NAME variable!" && exit 1
+
+# Verify that DJANGO_ENV_PATH is defined
+[ -z "${DJANGO_ENV_PATH+x}" ] && echo "ERROR-11c: .env does not define the DJANGO_ENV_PATH variable!" && exit 1
+
+echo "Removing old virtualenv dir(s)"
+# Verify that our project envs folder wasn't already created
+_MATCHES=($(find $DJANGO_ENV_HOME -type d \( -name "${DJANGO_ENV_NAME}*" \)))
+for DIR in ${_MATCHES[@]}; do
+  if [[ -d "$DIR" && "${DIR}xxx" != "xxx" && "${DIR}" != "/" ]]; then
+    echo "Found [$DIR] for removal!"
+    if ask "Do you wish to delete this folder and unlink?" N; then
+      rm -rvf $DIR
+      _LINK=$(${BASENAME} $DIR)
+      if [ -h "${WORKON_HOME}/${_LINK}" ]; then 
+        unlink ${WORKON_HOME}/${_LINK}
+      fi
+      # Unlink generic
+      if [ -h "${DJANGO_ENV_HOME}/${DJANGO_ENV_NAME}" ]; then
+        echo "Removing link: ${DJANGO_ENV_HOME}/${DJANGO_ENV_NAME}"
+        unlink ${DJANGO_ENV_HOME}/${DJANGO_ENV_NAME}
+      fi
+      if [ -h "${WORKON_HOME}/${DJANGO_ENV_NAME}" ]; then
+        echo "Removing link: ${WORKON_HOME}/${DJANGO_ENV_NAME}"
+        unlink ${WORKON_HOME}/${DJANGO_ENV_NAME}
+      fi
+    fi
+  fi
+done

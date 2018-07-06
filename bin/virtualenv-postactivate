@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# set -e
+
+if echo $SHELL | egrep -q '^.*\/zsh$'; then
+  script_dir=$(perl -e 'use File::Basename; use Cwd "abs_path"; print dirname(abs_path(@ARGV[0]));' -- "$0")
+elif echo $SHELL | egrep -q '^.*\/bash$'; then
+  script_dir=$(perl -e 'use File::Basename; use Cwd "abs_path"; print dirname(abs_path(@ARGV[0]));' -- "${BASH_SOURCE[0]}")
+else
+  echo "ERROR: no matching shell"
+  return
+fi
+
+## setup required binaries
+SRC_SCRIPT=${script_dir}/lib/setup-binary-vars.sh
+SRC_NUM=2
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    return 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  return 1
+fi
+
+## load default environment variables
+SRC_SCRIPT=${script_dir}/lib/load-defaults.sh
+SRC_NUM=3
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    return 1
+  }
+fi
+
+## load project .env file
+SRC_SCRIPT=${script_dir}/lib/load-env-vars.sh
+SRC_NUM=4
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    return 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  return 1
+fi
+
+## add ask-function
+SRC_SCRIPT=${script_dir}/lib/functions.sh
+SRC_NUM=5
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    return 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  return 1
+fi
+
+if [ -n "${_VIRTUALENV_RUNNING}" ]; then
+  echo "Virtualenv already *set*"
+  return 1
+else
+  export _VIRTUALENV_RUNNING=1
+  # Setup paths
+  export _PATH=$PATH
+  export PATH="${PROJECT_PATH}/bin:$PATH"
+  export _PYTHONPATH=$PYTHONPATH
+  export PYTHONPATH=${PROJECT_PATH}:${DJANGO_PROJECT_ROOT}:$PYTHONPATH
+
+  ## Cleanup db username/password
+  export DJANGO_DB_USER=`echo ${DJANGO_DB_USER} | sed 's/_//' | sed 's/-//' | sed 's/\.//'`
+  export DJANGO_DB_NAME=`echo ${DJANGO_DB_NAME} | sed 's/_//' | sed 's/-//' | sed 's/\.//'`
+  export ADMIN_DB_USER=`echo ${ADMIN_DB_USER} | sed 's/_//' | sed 's/-//' | sed 's/\.//'`
+  export ADMIN_DB_NAME=`echo ${ADMIN_DB_NAME} | sed 's/_//' | sed 's/-//' | sed 's/\.//'`
+
+  # Generic aliases
+  alias cdp="cd ${PROJECT_PATH}"
+  alias cdpd="cd ${DJANGO_PROJECT_ROOT}"
+  alias psql_project="PGPASSWORD=\"${DJANGO_DB_PASS}\" psql --port=${DJANGO_DB_PORT} --host=${DJANGO_DB_HOST} --username=${DJANGO_DB_USER} ${DJANGO_DB_NAME}"
+  alias psql_admin="PGPASSWORD=\"${ADMIN_DB_PASS}\" psql --port=${ADMIN_DB_PORT} --host=${ADMIN_DB_HOST} --username=${ADMIN_DB_USER} -d ${ADMIN_DB_NAME}"
+fi
+
+main_project_help() {
+  echo "Project Name:           ${PROJECT_NAME}"
+  echo "Project Path:           ${PROJECT_PATH}"
+  echo "Django Settings Module: ${DJANGO_SETTINGS_MODULE}"
+  echo ""
+  echo " cdp            -- change into project directory"
+  echo " cdpd           -- change into project django/angular directory"
+  echo " psql_project   -- psql into project database"
+  echo " psql_admin     -- admin psql account"
+}
+
+if [ -f "${LOCAL_POSTACTIVATE}" ]; then
+  echo "Loading custom postactivate..."
+  . ${LOCAL_POSTACTIVATE}
+else
+  echo "No local postactivate file @ ${POSTACTIVATE_FILE}"
+fi
+
+return 0
+echo "setup nvm/use etc..."

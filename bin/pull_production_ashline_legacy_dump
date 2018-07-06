@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Hagan Franks <hagan.franks@gmail.com>
+# Version 0.0.1
+# This script will run a pg_dump remotely on production and copy that down to our backups directory
+
+# exit script upon error
+set -e
+
+# If no .env found, exit!
+EXIT_ON_NO_ENV=1
+
+abs_path() {
+  perl -MCwd -le '
+    for (@ARGV) {
+      if ($p = Cwd::abs_path $_) {
+        print $p;
+      } else {
+        warn "abs_path: $_: $!\n";
+        $ret = 1;
+      }
+    }
+    exit $ret' "$@"
+}
+
+script_path=$(abs_path $0)
+script_dir=$(dirname ${script_path})
+
+## setup exit trap
+SRC_SCRIPT=${script_dir}/lib/setup-exit-trap.sh
+SRC_NUM=1
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    exit 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  exit 1
+fi
+
+## setup required binaries
+SRC_SCRIPT=${script_dir}/lib/setup-binary-vars.sh
+SRC_NUM=2
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    return 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  return 1
+fi
+
+## load project .env file
+SRC_SCRIPT=${script_dir}/lib/load-env-vars.sh
+SRC_NUM=3
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    return 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  return 1
+fi
+
+## add ask-function
+SRC_SCRIPT=${script_dir}/lib/functions.sh
+SRC_NUM=4
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    return 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  return 1
+fi
+
+if [[ -z ${RESTORE_PATH+x} ]]; then
+  echo "ERROR-1: 'RESTORE_PATH' not defined as a shell variable."
+  echo "Rerun with RESTORE_PATH='/home/$USER/projects/projname-deploytype/backups' $0"
+  exit 1
+fi
+
+if [[ ! -d ${RESTORE_PATH} ]]; then
+  echo "ERROR-2: '${RESTORE_PATH}' is not a valid directory!"
+  echo "mkdir -p ${RESTORE_PATH}' then rerun $0"
+  exit 1
+fi
+
+if [[ -z ${PRODUCTION_SERVER+x} ]]; then
+  echo "ERROR-3: 'PRODUCTION_SERVER' not defined as a shell variable."
+  echo "Add to .env or rerun with PRODUCTION_SERVER='' $0"
+  exit 1
+fi
+
+if [[ -z ${PRODUCTION_USER+x} ]]; then
+  echo "ERROR-4: 'PRODUCTION_USER' not defined as a shell variable."
+  echo "Add to .env or rerun with PRODUCTION_USER='' $0"
+  exit 1
+fi
+
+set +e
+
+ssh ${PRODUCTION_USER}@${PRODUCTION_SERVER} "pg_dump --no-owner --no-acl -i --host=localhost --port=5432 --username=postgres -Fc -b --create -v -f /tmp/ashline-legacy-data.dump ashline_legacy"
+if [[ $? -ne 0 ]]; then
+  echo "ERROR! Could not backup database. (check errors, may need to setup .pgpass)"
+  exit 1
+fi
+
+scp ${PRODUCTION_USER}@${PRODUCTION_SERVER}:/tmp/ashline-legacy-data.dump ${RESTORE_PATH}/`date +"%Y-%m-%d.%H.%M"`-ashline-legacy-data.dump
+if [[ $? -ne 0 ]]; then
+  echo "ERROR! Could not copy legacy db from ashline production. Please manually delete from $USER@ashline.arl.arizona.edu:/tmp/ashline-legacy-data.dump asap!!!"
+  exit 1
+fi
+
+ssh ${PRODUCTION_USER}@${PRODUCTION_SERVER} "rm /tmp/ashline-legacy-data.dump"
+if [[ $? -eq 0 ]]; then
+  echo "Successfully pulled db -> ${RESTORE_PATH}/`date +"%Y-%m-%d.%H.%M"`-ashline-legacy-data.dump"
+else
+  echo "ERROR! Could not delete legacy db from ${PRODUCTION_SERVER}. Please manually delete from ${PRODUCTION_USER}@${PRODUCTION_SERVER}:/tmp/ashline-legacy-data.dump asap!!!"
+  exit 1
+fi

@@ -1,0 +1,884 @@
+#!/usr/bin/env bash
+# Hagan Franks 2018-06-13 franks ȦŦ email Ḓ0Ŧ arizona Ḓ0Ŧ edu
+# DEBUG=true
+# exit script upon error
+# set -e
+# [ -n "$DEBUG" ] && set -x
+
+# If no .env found, exit!
+EXIT_ON_NO_ENV=0
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+if test -d ${script_dir}/../bcfsrc; then
+  ENV_FILE=${script_dir}/../bcfsrc/.env
+  ENV_FILE_EXAMPLE=${script_dir}/../bcfsrc/.env_example
+elif test -d ${script_dir}/../django_project; then
+  ENV_FILE=${script_dir}/../django_project/.env
+  ENV_FILE_EXAMPLE=${script_dir}/../django_project/.env_example
+else
+  echo "ERROR: Couldn't find what i was looking for."
+  exit 0
+fi
+if [[ ! -f ${ENV_FILE} ]]; then
+  cp ${ENV_FILE_EXAMPLE} ${ENV_FILE}
+  echo "Please edit your ${ENV_FILE} and re-run this script..."
+  exit 0
+fi
+
+# Load libraries
+## setup exit trap
+SRC_SCRIPT=${script_dir}/lib/setup-exit-trap.sh
+SRC_NUM=1
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    exit 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  exit 1
+fi
+## setup required binaries
+SRC_SCRIPT=${script_dir}/lib/setup-binary-vars.sh
+SRC_NUM=2
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    exit 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  exit 1
+fi
+
+## load project .env file
+SRC_SCRIPT=${script_dir}/lib/load-env-vars.sh
+SRC_NUM=3
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    exit 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  exit 1
+fi
+
+## add ask-function
+SRC_SCRIPT=${script_dir}/lib/functions.sh
+SRC_NUM=4
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    exit 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  exit 1
+fi
+
+# Verify we're running linux (abort otherwise)
+if [ "$OSCLASS" != 'linux' ]; then
+    echo "ERROR-5: Not running linux!"
+    exit 1
+fi
+
+## PRE CHECKS
+# Verify that PROJECT_PATH is defined
+if [[ -z ${PROJECT_PATH+x} ]]; then
+  echo "ERROR-6: .env does not define our PROJECT_PATH environment variable!"
+  exit 1
+fi
+
+# Verify that PROJECT_NAME is defined
+if [[ -z ${PROJECT_NAME+x} ]]; then
+  echo "ERROR-7: .env does not define our PROJECT_NAME environment variable!"
+  exit 1
+fi
+
+# Verify that DEPLOY_TYPE is defined
+if [[ -z ${DEPLOY_TYPE+x} ]]; then
+  echo "ERROR-8: .env does not define our DEPLOY_TYPE environment variable!"
+  exit 1
+fi
+
+if [[ ! -f "${PROJECT_PATH}/etc/systemd/celerybeat.service" ]]; then
+    echo "ERROR-9: missing ${PROJECT_PATH}/etc/systemd/celerybeat.service"
+    exit 1
+fi
+
+if [[ ! -f "${PROJECT_PATH}/etc/systemd/celery.service" ]]; then
+    echo "ERROR-10: missing ${PROJECT_PATH}/etc/systemd/celerybeat.service"
+    exit 1
+fi
+
+if [[ -z ${CELERY_UNIX_USER+x} ]]; then
+    echo "ERROR-11: the environmental variable 'CELERY_UNIX_USER' is not set in .env!"
+    exit 1
+fi
+
+if [[ -z ${RABBITMQ_USER+x} ]]; then
+    echo "ERROR-12: the environmental variable 'RABBITMQ_USER' is not set in .env!"
+    exit 1
+fi
+
+if [[ -z ${RABBITMQ_PASS+x} ]]; then
+    echo "ERROR-13: the environmental variable 'RABBITMQ_PASS' is not set in .env!"
+    exit 1
+fi
+
+if [[ -z ${CELERY_UNIX_GID+x} ]]; then
+  echo "ERROR-14: the environmental variable 'CELERY_UNIX_GID' is not set in .env!"
+  exit 1
+fi
+
+if [[ -z ${CELERY_UNIX_UID+x} ]]; then
+  echo "ERROR-15: the environmental variable 'CELERY_UNIX_UID' is not set in .env!"
+  exit 1
+fi
+
+if [ $(id -u) -ne 0 ]; then
+  echo "ERROR-16: This program can only be used by the root user."
+  exit 1
+fi
+
+if [ $(uname) != 'Linux' ]; then
+  echo "ERROR-17: This script only works on linux"
+  exit 1
+fi
+
+# if [[ -z ${CELERY_LOG_DIR+x} ]]; then
+#   echo "ERROR-16: the environmental variable 'CELERY_LOG_DIR' is not set in .env!"
+#   exit 1
+# fi
+
+# if [[ -z ${CELERYD_LOG_FILE+x} ]]; then
+#   echo "ERROR-17: the environmental variable 'CELERYD_LOG_FILE' is not set in .env!"
+#   exit 1
+# fi
+
+BINARY='rreadlink'
+RREADLINK_BIN=$(eval $WHEREIS)
+check_missing_bin "${RREADLINK_BIN}" "${BINARY}" "Clone rreadlink in a bin directory: https://raw.githubusercontent.com/mklement0/rreadlink/stable/bin/rreadlink"
+if [ $? -ne 0 ]; then
+  exit
+fi
+
+# systemd version
+SYSTEMD_SRC_ENV="${PROJECT_PATH}/etc/default/webquit-celery"
+SYSTEMD_DST_ENV="/etc/default/${PROJECT_NAME}-${DEPLOY_TYPE}-celery"
+
+SYSTEMD_SRC_SCRIPT="${PROJECT_PATH}/etc/systemd/celery.service"
+SYSTEMD_DST_SCRIPT="/etc/systemd/system/${PROJECT_NAME}-${DEPLOY_TYPE}-celery.service"
+
+SYSTEMD_SRC_CONFIG="${PROJECT_PATH}/etc/systemd/celery.conf"
+SYSTEMD_DST_CONFIG="/etc/systemd/system/${PROJECT_NAME}-${DEPLOY_TYPE}-celery.conf"
+
+SYSTEMD_SRC_TMPFILE="${PROJECT_PATH}/etc/tmpfiles.d/celery.conf"
+SYSTEMD_DST_TMPFILE="/etc/tmpfiles.d/${PROJECT_NAME}-${DEPLOY_TYPE}-celery.conf"
+
+SYSTEMD_SRC_BEATSCRIPT="${PROJECT_PATH}/etc/systemd/celerybeat.service"
+SYSTEMD_DST_BEATSCRIPT="/etc/systemd/system/${PROJECT_NAME}-${DEPLOY_TYPE}-celerybeat.service"
+
+SYSTEMD_SRC_BEATCONF="${PROJECT_PATH}/etc/systemd/celerybeat.conf"
+SYSTEMD_DST_BEATCONF="/etc/systemd/system/${PROJECT_NAME}-${DEPLOY_TYPE}-celerybeat.conf"
+
+SYSV_SRC_SCRIPT="${PROJECT_PATH}/etc/init.d/webquit-celeryd"
+SYSV_DST_SCRIPT="/etc/init.d/${PROJECT_NAME}-${DEPLOY_TYPE}-celeryd"
+
+SYSV_SRC_CONFIG="${PROJECT_PATH}/etc/default/webquit-celeryd"
+SYSV_DST_CONFIG="/etc/default/${PROJECT_NAME}-${DEPLOY_TYPE}-celeryd"
+
+SYSV_SRC_BEATSCRIPT="${PROJECT_PATH}/etc/init.d/webquit-celerybeat"
+SYSV_DST_BEATSCRIPT="/etc/init.d/${PROJECT_NAME}-${DEPLOY_TYPE}-celerybeat"
+
+SYSV_SRC_BEATCONF="${PROJECT_PATH}/etc/default/webquit-celerybeat"
+SYSV_DST_BEATCONF="/etc/default/${PROJECT_NAME}-${DEPLOY_TYPE}-celerybeat"
+
+SYSV_TMP_APP_DIR="/tmp/${PROJECT_NAME}-${DEPLOY_TYPE}"
+
+RSYSLOG_SRC="${PROJECT_PATH}/etc/rsyslog.d/21-webquit.conf"
+RSYSLOG_DST="/etc/rsyslog.d/21-${PROJECT_NAME}-${DEPLOY_TYPE}.conf"
+
+# Path to the celery beat shell script
+CELERYBEAT_SHELL_SCRIPT="${PROJECT_PATH}/bin/daemon-celerybeat.sh"
+
+
+# echo "Verify the following shell vars are correct for this project!"
+# echo "If not adjust ${ENV_FILE} file.  Once this is complete, you can run the bin/mkvirtualenv script."
+
+# source ${script_dir}/lib/load-env-vars.sh "$script_dir/.."
+# for line in `cat $ENV_FILE | grep -v '^$' | grep -v '^#.*' | sed -E -e 's/^([[:alnum:]_]+).*$/\1/g' | tr '\n' ' '`
+# do
+#   echo "$line: ${!line}"
+# done
+
+
+## Helper function (takes in variable name and file location)
+# edits uses bash variable name and replaces that with local var..
+function _editfile() {
+    if [[ ${5:-"ok"} == "debug" ]]; then
+        # replace line matching (1)=  with (1)=$2
+        # quote char = option 3
+        # file = option 4
+        # if 5 is 'debug' show following:
+        echo "1:     (a): $1"
+        echo "2:     (b): $2"
+        echo "2: (b val): ${!2}"
+        echo "3:   quote: $3"
+        echo "      file: $4"
+    fi
+    sudo sed -E -i -e "s~^$1=.*~$1=${3}${!2}${3}~" $4
+}
+
+function stop_running_daemons() {
+    echo "Shutdown celery processes..."
+    if [[ -f $SYSTEMD_DST_SCRIPT ]]; then
+        sudo systemctl stop ${PROJECT_NAME}-${DEPLOY_TYPE}-celery.service
+    fi
+    if [[ -f $SYSTEMD_DST_BEATSCRIPT ]]; then
+        sudo systemctl stop ${PROJECT_NAME}-${DEPLOY_TYPE}-celerybeat.service
+    fi
+    if [[ -f $SYSV_DST_SCRIPT ]]; then
+      sudo $SYSV_DST_SCRIPT stop
+    fi
+    if [[ -f $SYSV_DST_BEATSCRIPT ]]; then
+      sudo $SYSV_DST_BEATSCRIPT stop
+    fi
+    # Removing remaining celery services
+    KILL_PIDS=`ps -ef | grep ${CELERY_UNIX_USER} | grep -v grep | awk '{print $2}'`
+    echo "Terminating remaining PID's: $KILL_PIDS"
+    sudo pkill -U ${CELERY_UNIX_USER}
+}
+
+function uninstall_app_systemd() {
+    echo "Removing ${PROJECT_NAME} scripts..."
+
+    for sf in "${SYSTEMD_DST_ENV}" "${SYSTEMD_DST_SCRIPT}" "${SYSTEMD_DST_CONFIG}" "${SYSTEMD_DST_TMPFILE}" "${SYSTEMD_DST_BEATSCRIPT}" "${SYSTEMD_DST_BEATCONF}" "${SYSV_DST_SCRIPT}" "${SYSV_DST_CONFIG}" "${SYSV_DST_BEATSCRIPT}" "${SYSV_DST_BEATCONF}" "${RSYSLOG_DST}"
+    do
+        if test -f $sf; then
+            sudo rm $sf
+            echo "  $sf has been removed"
+        fi
+    done
+}
+
+function create_rabbitmq_user() {
+    echo "Setting up new rabbitmq user: ${RABBITMQ_USER}"
+    # Configure rabbitmq stuff
+    sudo ${RABBITMQCTL} list_users | grep ${RABBITMQ_USER}
+    if [[ $? -eq 1 ]]; then
+        echo "Adding rabbitmq user: ${RABBITMQ_USER}..."
+        if [[ "${RABBITMQ_PASS}xxx" == "xxx" ]]; then
+            echo "Error, set RABBITMQ_PASS in .env!"
+            exit 1
+        fi
+        sudo ${RABBITMQCTL} add_user ${RABBITMQ_USER} ${RABBITMQ_PASS}
+        sudo ${RABBITMQCTL} add_vhost ${PROJECT_NAME}-${DEPLOY_TYPE}-celery
+        sudo ${RABBITMQCTL} set_permissions -p ${PROJECT_NAME}-${DEPLOY_TYPE}-celery ${RABBITMQ_USER} ".*" ".*" ".*"
+    else
+        echo "rabbitmq user ${RABBITMQ_USER} already exists"
+    fi
+}
+
+function remove_rabbitmq_user() {
+    sudo ${RABBITMQCTL} list_users | grep ${RABBITMQ_USER}
+    if [[ $? -eq 0 ]]; then
+        sudo ${RABBITMQCTL} clear_permissions -p ${PROJECT_NAME}-${DEPLOY_TYPE}-celery ${RABBITMQ_USER}
+        sudo ${RABBITMQCTL} delete_user ${RABBITMQ_USER}
+        sudo ${RABBITMQCTL} delete_vhost ${PROJECT_NAME}-${DEPLOY_TYPE}-celery
+    else
+        echo "rabbitmq user ${RABBITMQ_USER} already removed"
+    fi
+}
+
+function create_daemon_user() {
+    # Setup CELERY_UNIX_GROUP
+    echo "Setting up new celery group: ${CELERY_UNIX_GROUP} with GID: ${CELERY_UNIX_GID}"
+    ret=false
+    if getent group ${CELERY_UNIX_GROUP} | grep -E "^${CELERY_UNIX_GROUP}:.*\$" >/dev/null; then
+        echo "Error: '${CELERY_UNIX_GROUP}' group already exists!"
+    else
+        echo "Adding group ${CELERY_UNIX_GROUP}"
+        sudo addgroup --system --gid ${CELERY_UNIX_GID} ${CELERY_UNIX_GROUP}
+    fi
+    # Setup CELERY_UNIX_USER user account
+    echo "Setting up new celery user/group account: ${CELERY_UNIX_USER}"
+    ret=false
+    getent passwd ${CELERY_UNIX_USER} | grep -E "^${CELERY_UNIX_USER}:.*\$" >/dev/null 2>&1 && ret=true
+    if $ret; then
+        echo "Error: '${CELERY_UNIX_USER}' user already exists!"
+        exit 1
+    else
+        sudo useradd ${CELERY_UNIX_USER} \
+            --system \
+            --comment "celerybeat for ${PROJECT_NAME}-${DEPLOY_TYPE}" \
+            -M \
+            --shell /bin/bash \
+            --home-dir ${PROJECT_PATH} \
+            --uid ${CELERY_UNIX_UID} \
+            --gid ${CELERY_UNIX_GID}
+        #sudo usermod -a -G ${CELERY_UNIX_GROUP} ${CELERY_UNIX_USER}
+        OVERWRITE=0
+        if [[ -f "${PROJECT_PATH}/.bashrc" ]]; then
+            echo "Found: ${PROJECT_PATH}/.bashrc"
+            if ! ask "Do you want to replace this file?" N; then
+                OVERWRITE=1
+            fi
+        fi
+        if [[ $OVERWRITE -eq 0 ]]; then
+            sudo /bin/cp /etc/skel/.bashrc ${PROJECT_PATH}
+            echo -ne "export WORKON_HOME=${DJANGO_ENV_HOME}\nexport VIRTUALENVWRAPPER_HOOK_DIR=${DJANGO_ENV_PATH}/hooks\nexport PYTHONPATH=${PROJECT_PATH}:${DJANGO_PROJECT_ROOT}\nsource /usr/local/bin/virtualenvwrapper.sh\n" | sudo tee ${PROJECT_PATH}/.bashrc > /dev/null
+        fi
+        ## Patch issue with creating hooks for the celery user.
+        mkdir ${DJANGO_ENV_PATH}/hooks
+        chown ${CELERY_UNIX_USER}:${CELERY_UNIX_GROUP} ${DJANGO_ENV_PATH}/hooks
+        chmod g+w ${DJANGO_ENV_HOME}/hooks
+        OVERWRITE=0
+        if [[ -f "${PROJECT_PATH}/.bash_login" ]]; then
+          echo "Found: ${PROJECT_PATH}/.bash_login"
+          if ! ask "Do you want to replace this file?" N; then
+              OVERWRITE=1
+          fi
+        fi
+        if [[ $OVERWRITE -eq 0 ]]; then
+            echo -ne "if [ -f ~/.bashrc ]; then\n. ~/.bashrc\nfi\n" | sudo tee ${PROJECT_PATH}/.bash_login > /dev/null
+        fi
+    fi
+}
+
+function remove_daemon_user() {
+    ret=false
+    getent passwd ${CELERY_UNIX_USER} >/dev/null 2>&1 && ret=true
+    if $ret; then
+        if ask "Are you sure you want to remove the account '${CELERY_UNIX_USER}'?" N; then
+            sudo deluser ${CELERY_UNIX_USER}
+            echo "uninstalled ${CELERY_UNIX_USER} user"
+        fi
+    fi
+    echo "Check the group ${CELERY_UNIX_GROUP}, if there are no more users associated with it, you may remove it."
+}
+
+function setup_rsyslog_file() {
+  NEW_FILE=false
+  if [[ -f "${RSYSLOG_DST}" ]]; then
+      echo "A exists at : ${RSYSLOG_DST}!"
+      if ask "Do you want to replace this file?" N; then
+          sudo cp ${RSYSLOG_SRC} ${RSYSLOG_DST}
+          NEW_FILE=true
+      fi
+  else
+      sudo cp ${RSYSLOG_SRC} ${RSYSLOG_DST}
+      NEW_FILE=true
+  fi
+  if [[ ${NEW_FILE} ]]; then
+    echo "new -> ${RSYSLOG_DST}"
+    sudo sed -E -i -e "1s~webquit~${PROJECT_NAME}-${DEPLOY_TYPE}~" ${RSYSLOG_DST}
+    sudo sed -E -i -e "s~TEMPLATETOKEN1~template${PROJECT_NAME}${DEPLOY_TYPE}~" ${RSYSLOG_DST}
+    sudo sed -E -i -e "s~LOGTAGTOKENA~${PROJECT_NAME}-${DEPLOY_TYPE}~" ${RSYSLOG_DST}
+
+    echo "Reload rsyslog daemon"
+    echo "$ sudo systemctl restart rsyslog"
+  fi
+}
+
+function setup_default_env_file() {
+  # This copies and configures the ENV file used for setting default environment variables.
+  NEW_FILE=false
+    if [[ -f "${SYSTEMD_DST_ENV}" ]]; then
+        echo "A exists at : ${SYSTEMD_DST_ENV}!"
+        if ask "Do you want to replace this file?" N; then
+            sudo cp ${SYSTEMD_SRC_ENV} ${SYSTEMD_DST_ENV}
+            NEW_FILE=true
+        fi
+    else
+        sudo cp ${SYSTEMD_SRC_ENV} ${SYSTEMD_DST_ENV}
+        NEW_FILE=true
+    fi
+    if [[ ${NEW_FILE} ]]; then
+        echo "new -> ${SYSTEMD_DST_ENV}"
+        if [ -e ${SYSTEMD_DST_ENV} ]; then
+            _editfile 'HOME' 'PROJECT_PATH' "'" ${SYSTEMD_DST_ENV}
+            _editfile 'PROJECT_PATH' 'PROJECT_PATH' "'" ${SYSTEMD_DST_ENV}
+            _editfile 'DJANGO_PROJECT_ROOT' 'DJANGO_PROJECT_ROOT' "'" ${SYSTEMD_DST_ENV}
+            _editfile 'DJANGO_SETTINGS_MODULE' 'DJANGO_SETTINGS_MODULE' "'" ${SYSTEMD_DST_ENV}
+            _editfile 'PYTHONPATH' 'PYTHONPATH' "'" ${SYSTEMD_DST_ENV}
+            _editfile 'CELERYD_NODES' 'CELERYD_NODES' "'" ${SYSTEMD_DST_ENV}
+            _editfile 'CELERY_BIN' 'CELERY_BIN' "'" ${SYSTEMD_DST_ENV}
+            sudo sed -E -i -e "s~^CELERY_APP=.*~CELERY_APP='${DJANGO_SRC_NAME}.celery_app:app'~" ${SYSTEMD_DST_ENV}
+            _editfile 'CELERY_CHDIR' 'DJANGO_PROJECT_ROOT' "'" ${SYSTEMD_DST_ENV}
+            _editfile 'CELERYD_OPTS' 'CELERYD_OPTS' "'" ${SYSTEMD_DST_ENV}
+            _editfile 'CELERYD_PID_FILE' 'CELERYD_PID_FILE' "'" ${SYSTEMD_DST_ENV}
+            #_editfile 'CELERYD_LOG_FILE' 'CELERYD_LOG_FILE' "'" ${SYSTEMD_DST_ENV}
+            _editfile 'CELERY_USER' 'CELERY_UNIX_USER' "'" ${SYSTEMD_DST_ENV}
+            _editfile 'CELERY_GROUP' 'CELERY_UNIX_GROUP' "'" ${SYSTEMD_DST_ENV}
+            _editfile 'CELERYBEAT_PID_FILE' 'CELERYBEAT_PID_FILE' "'" ${SYSTEMD_DST_ENV}
+            _editfile 'CELERYBEAT_LOG_FILE' 'CELERYBEAT_LOG_FILE' "'" ${SYSTEMD_DST_ENV}
+            _editfile 'CELERYBEAT_OPTS' 'CELERYBEAT_OPTS' "'" ${SYSTEMD_DST_ENV}
+
+            # WEBQUIT VARS
+            _editfile 'DJANGO_ENV_PATH' 'DJANGO_ENV_PATH' "'" ${SYSTEMD_DST_ENV}
+            _editfile 'ENV_FILE' 'ENV_FILE' "'" ${SYSTEMD_DST_ENV}
+        fi
+    fi
+}
+
+function setup_celeryd_systemd_script() {
+  # This copies and configures the celeryd systemd service script.
+  NEW_FILE=false
+  if [[ -f "${SYSTEMD_DST_SCRIPT}" ]]; then
+    echo "A exists at : ${SYSTEMD_DST_SCRIPT}!"
+    if ask "Do you want to replace this file?" N; then
+      sudo cp ${SYSTEMD_SRC_SCRIPT} ${SYSTEMD_DST_SCRIPT}
+      NEW_FILE=true
+    fi
+  else
+    sudo cp ${SYSTEMD_SRC_SCRIPT} ${SYSTEMD_DST_SCRIPT}
+    NEW_FILE=true
+  fi
+  if [[ ${NEW_FILE} ]]; then
+    echo "new -> ${SYSTEMD_DST_SCRIPT}"
+    if [ -e ${SYSTEMD_DST_SCRIPT} ]; then
+      _editfile 'Description' 'CELERYD_SYSTEMD_DESCRIPTION' '' ${SYSTEMD_DST_SCRIPT}
+      _editfile 'User' 'CELERY_UNIX_USER' '' ${SYSTEMD_DST_SCRIPT}
+      _editfile 'Group' 'CELERY_UNIX_GROUP' '' ${SYSTEMD_DST_SCRIPT}
+      _editfile 'EnvironmentFile' 'SYSTEMD_DST_ENV' '' ${SYSTEMD_DST_SCRIPT}
+      _editfile 'WorkingDirectory' 'PROJECT_PATH' '' ${SYSTEMD_DST_SCRIPT}
+    fi
+  fi
+}
+
+function setup_celeryd_systemd_config() {
+  # This copies and configures the celeryd systemd service script's configuration file.
+  NEW_FILE=false
+  if [[ -f "${SYSTEMD_DST_CONFIG}" ]]; then
+    echo "A exists at : ${SYSTEMD_DST_CONFIG}!"
+    if ask "Do you want to replace this file?" N; then
+      sudo cp ${SYSTEMD_SRC_CONFIG} ${SYSTEMD_DST_CONFIG}
+      NEW_FILE=true
+    fi
+  else
+    sudo cp ${SYSTEMD_SRC_CONFIG} ${SYSTEMD_DST_CONFIG}
+    NEW_FILE=true
+  fi
+  if [[ ${NEW_FILE} ]]; then
+    echo "new -> ${SYSTEMD_DST_CONFIG}"
+    if [ -e ${SYSTEMD_DST_CONFIG} ]; then
+      sudo sed -E -i -e "s~^CELERY_APP=.*~CELERY_APP='${DJANGO_SRC_NAME}.celery_app:app'~" ${SYSTEMD_DST_CONFIG}
+      _editfile 'CELERYD_NODES' 'CELERYD_NODES' "'" ${SYSTEMD_DST_CONFIG}
+      _editfile 'CELERYD_OPTS' 'CELERYD_OPTS' "'" ${SYSTEMD_DST_CONFIG}
+      _editfile 'CELERY_BIN' 'CELERY_BIN' "'" ${SYSTEMD_DST_CONFIG}
+      _editfile 'CELERYD_PID_FILE' 'CELERYD_PID_FILE' "'" ${SYSTEMD_DST_CONFIG}
+      #_editfile 'CELERYD_LOG_FILE' 'CELERYD_LOG_FILE' "'" ${SYSTEMD_DST_CONFIG}
+      _editfile 'CELERYD_LOG_LEVEL' 'CELERYD_LOG_LEVEL' "'" ${SYSTEMD_DST_CONFIG}
+    fi
+  fi
+}
+
+function setup_celerybeat_systemd_script() {
+  # This copies and configures the celerybeat systemd service script.
+  NEW_FILE=false
+  if [[ -f "${SYSTEMD_DST_BEATSCRIPT}" ]]; then
+    echo "A exists at : ${SYSTEMD_DST_BEATSCRIPT}!"
+    if ask "Do you want to replace this file?" N; then
+      sudo cp ${SYSTEMD_SRC_BEATSCRIPT} ${SYSTEMD_DST_BEATSCRIPT}
+      NEW_FILE=true
+    fi
+  else
+    sudo cp ${SYSTEMD_SRC_BEATSCRIPT} ${SYSTEMD_DST_BEATSCRIPT}
+    NEW_FILE=true
+  fi
+  if [[ ${NEW_FILE} ]]; then
+    echo "new -> ${SYSTEMD_DST_BEATSCRIPT}"
+    if [ -e ${SYSTEMD_DST_BEATSCRIPT} ]; then
+      _editfile 'Description' 'CELERYBEAT_SYSTEMD_DESCRIPTION' '' ${SYSTEMD_DST_BEATSCRIPT}
+      _editfile 'User' 'CELERY_UNIX_USER' '' ${SYSTEMD_DST_BEATSCRIPT}
+      _editfile 'Group' 'CELERY_UNIX_GROUP' '' ${SYSTEMD_DST_BEATSCRIPT}
+      _editfile 'EnvironmentFile' 'SYSTEMD_DST_ENV' '' ${SYSTEMD_DST_BEATSCRIPT}
+      _editfile 'WorkingDirectory' 'PROJECT_PATH' '' ${SYSTEMD_DST_BEATSCRIPT}
+      _editfile 'ExecStart' 'CELERYBEAT_SHELL_SCRIPT' '' ${SYSTEMD_DST_BEATSCRIPT}
+    fi
+  fi
+}
+
+function setup_celerybeat_systemd_config(){
+  # This copies and configures the celerybeat systemd service config.
+  NEW_FILE=false
+  if [[ -f "${SYSTEMD_DST_BEATCONF}" ]]; then
+    echo "A exists at : ${SYSTEMD_DST_BEATCONF}!"
+    if ask "Do you want to replace this file?" N; then
+      sudo cp ${SYSTEMD_SRC_BEATCONF} ${SYSTEMD_DST_BEATCONF}
+      NEW_FILE=true
+    fi
+  else
+    sudo cp ${SYSTEMD_SRC_BEATCONF} ${SYSTEMD_DST_BEATCONF}
+    NEW_FILE=true
+  fi
+  if [[ ${NEW_FILE} ]]; then
+    echo "new -> ${SYSTEMD_DST_BEATCONF}"
+    if [ -e ${SYSTEMD_DST_BEATCONF} ]; then
+      sudo sed -E -i -e "s~^CELERY_APP=.*~CELERY_APP='${DJANGO_SRC_NAME}.celery_app:app'~" ${SYSTEMD_DST_BEATCONF}
+      _editfile 'CELERYBEAT_OPTS' 'CELERYBEAT_OPTS' "'" ${SYSTEMD_DST_BEATCONF}
+      _editfile 'CELERY_BIN' 'CELERY_BIN' "'" ${SYSTEMD_DST_BEATCONF}
+      _editfile 'CELERYBEAT_PID_FILE' 'CELERYBEAT_PID_FILE' "'" ${SYSTEMD_DST_BEATCONF}
+      _editfile 'CELERYBEAT_LOG_FILE' 'CELERYBEAT_LOG_FILE' "'" ${SYSTEMD_DST_BEATCONF}
+      _editfile 'CELERYBEAT_LOG_LEVEL' 'CELERYBEAT_LOG_LEVEL' "'" ${SYSTEMD_DST_BEATCONF}
+      _editfile 'CELERYBEAT_SCHEDULE' 'CELERYBEAT_SCHEDULE' "'" ${SYSTEMD_DST_BEATCONF}
+    fi
+  fi
+}
+
+function setup_celery_tmpfiles() {
+  # This copies and configures the tmpfiles.d file
+  NEW_FILE=false
+  if [[ -f "${SYSTEMD_DST_TMPFILE}" ]]; then
+    echo "A exists at : ${SYSTEMD_DST_TMPFILE}!"
+    if ask "Do you want to replace this file?" N; then
+      sudo cp ${SYSTEMD_SRC_TMPFILE} ${SYSTEMD_DST_TMPFILE}
+      NEW_FILE=true
+    fi
+  else
+    sudo cp ${SYSTEMD_SRC_TMPFILE} ${SYSTEMD_DST_TMPFILE}
+    NEW_FILE=true
+  fi
+  if [[ ${NEW_FILE} ]]; then
+    echo "new -> ${SYSTEMD_DST_TMPFILE}"
+    if [ -e ${SYSTEMD_DST_TMPFILE} ]; then
+      sudo sed -E -i -e "s~^d /var/run/celery 0755 celery celery -~d ${CELERY_RUN_DIR} 0755 ${CELERY_UNIX_USER} ${CELERY_UNIX_GROUP}~" ${SYSTEMD_DST_TMPFILE}
+    fi
+  fi
+  # Setup/reset the tmp directories...
+  sudo systemd-tmpfiles --clean --create ${SYSTEMD_DST_TMPFILE}
+}
+
+function setup_celery_systemd() {
+  # celery env file
+  setup_default_env_file;
+  # celery systemd celeryd script
+  setup_celeryd_systemd_script;
+  # celery systemd celeryd config
+  setup_celeryd_systemd_config;
+  # Setup tmpfile.d for creating the run/pid directory
+  setup_celery_tmpfiles;
+  # Setup systemd celerybeat script
+  setup_celerybeat_systemd_script;
+  # Setup systemd celerybeat config
+  setup_celerybeat_systemd_config;
+}
+
+function setup_celeryd_sysv_script() {
+  # This copies the system v celeryd script.
+  if [[ -f "${SYSV_DST_SCRIPT}" ]]; then
+    echo "A exists at : ${SYSV_DST_SCRIPT}!"
+    if ask "Do you want to replace this file?" N; then
+      sudo cp ${SYSV_SRC_SCRIPT} ${SYSV_DST_SCRIPT}
+    fi
+  else
+    sudo cp ${SYSV_SRC_SCRIPT} ${SYSV_DST_SCRIPT}
+  fi
+}
+
+function setup_celeryd_sysv_config() {
+  # This copies the project/etc/default/webquit-celeryd to /etc/default/.
+  NEW_FILE=false
+  if [[ -f "${SYSV_DST_CONFIG}" ]]; then
+    echo "A exists at : ${SYSV_DST_CONFIG}!"
+    if ask "Do you want to replace this file?" N; then
+      sudo cp ${SYSV_SRC_CONFIG} ${SYSV_DST_CONFIG}
+      NEW_FILE=true
+    fi
+  else
+    sudo cp ${SYSV_SRC_CONFIG} ${SYSV_DST_CONFIG}
+    NEW_FILE=true
+  fi
+  if [[ ${NEW_FILE} ]]; then
+    echo "new -> ${SYSV_DST_CONFIG}"
+    if [ -e ${SYSV_DST_CONFIG} ]; then
+      _editfile 'HOME' 'PROJECT_PATH' "'" ${SYSV_DST_CONFIG}
+      _editfile 'PROJECT_PATH' 'PROJECT_PATH' "'" ${SYSV_DST_CONFIG}
+      _editfile 'DJANGO_PROJECT_ROOT' 'DJANGO_PROJECT_ROOT' "'" ${SYSV_DST_CONFIG}
+      _editfile 'DJANGO_SETTINGS_MODULE' 'DJANGO_SETTINGS_MODULE' "'" ${SYSV_DST_CONFIG}
+      _editfile 'PYTHONPATH' 'PYTHONPATH' "'" ${SYSV_DST_CONFIG}
+      _editfile 'CELERYD_NODES' 'CELERYD_NODES' "'" ${SYSV_DST_CONFIG}
+      _editfile 'CELERY_BIN' 'CELERY_BIN' "'" ${SYSV_DST_CONFIG}
+      sudo sed -E -i -e "s~^CELERY_APP=.*~CELERY_APP='${DJANGO_SRC_NAME}.celery_app:app'~" ${SYSV_DST_CONFIG}
+      _editfile 'CELERY_BIN' 'CELERY_BIN' "'" ${SYSV_DST_CONFIG}
+      _editfile 'CELERY_CHDIR' 'DJANGO_PROJECT_ROOT' "'" ${SYSV_DST_CONFIG}
+      _editfile 'CELERYD_OPTS' 'CELERYD_OPTS' "'" ${SYSV_DST_CONFIG}
+      _editfile 'CELERYD_PID_FILE' 'CELERYD_PID_FILE' "'" ${SYSV_DST_CONFIG}
+      # _editfile 'CELERYD_LOG_FILE' 'CELERYD_LOG_FILE' "'" ${SYSV_DST_CONFIG}
+      _editfile 'CELERY_USER' 'CELERY_UNIX_USER' "'" ${SYSV_DST_CONFIG}
+      _editfile 'CELERY_GROUP' 'CELERY_UNIX_GROUP' "'" ${SYSV_DST_CONFIG}
+      # CELERYBEAT
+      _editfile 'CELERYBEAT_PID_FILE' 'CELERYBEAT_PID_FILE' "'" ${SYSV_DST_CONFIG}
+      _editfile 'CELERYBEAT_OPTS' 'CELERYBEAT_OPTS' "'" ${SYSV_DST_CONFIG}
+      # WEBQUIT VARS
+      _editfile 'DJANGO_ENV_PATH' 'DJANGO_ENV_PATH' "'" ${SYSV_DST_CONFIG}
+      _editfile 'ENV_FILE' 'ENV_FILE' "'" ${SYSV_DST_CONFIG}
+    fi
+  fi
+}
+
+function setup_sysv_beat_script() {
+  # This copies the system v celerybeat script.
+  if [[ -f "${SYSV_DST_BEATSCRIPT}" ]]; then
+    echo "A exists at : ${SYSV_DST_BEATSCRIPT}!"
+    if ask "Do you want to replace this file?" N; then
+      sudo cp ${SYSV_SRC_BEATSCRIPT} ${SYSV_DST_BEATSCRIPT}
+    fi
+  else
+    sudo cp ${SYSV_SRC_BEATSCRIPT} ${SYSV_DST_BEATSCRIPT}
+  fi
+}
+
+function setup_sysv_tmp_dir(){
+  # This will create and set permissions for the scheduler file tmp dir
+  if [ -d "${SYSV_TMP_APP_DIR}" ]; then
+    if [ -L "${SYSV_TMP_APP_DIR}" ]; then
+      echo "${SYSV_TMP_APP_DIR} is a symbolic link!"
+      TEMPVAR=$(${RREADLINK} ${SYSV_TMP_APP_DIR})
+      echo "-> ${TEMPVAR}"
+      chown "${CELERY_UNIX_USER}":"${CELERY_UNIX_USER}" ${TEMPVAR}
+    else
+      chown "${CELERY_UNIX_USER}":"${CELERY_UNIX_USER}" ${SYSV_TMP_APP_DIR}
+    fi
+  else
+    echo "Creating the ${SYSV_TMP_APP_DIR} dir."
+    mkdir ${SYSV_TMP_APP_DIR}
+    echo "set permssions: \"${CELERY_UNIX_USER}\":\"${CELERY_UNIX_USER}\""
+    chown "${CELERY_UNIX_USER}":"${CELERY_UNIX_USER}" ${SYSV_TMP_APP_DIR}
+  fi
+}
+
+function remove_sysv_tmp_dir(){
+  echo "removing sysv tmp dir..."
+  if [[ $sysv -eq 1 ]]; then
+    if [ -d "${SYSV_TMP_APP_DIR}" ]; then
+      if [ -L "${SYSV_TMP_APP_DIR}" ]; then
+        unlink ${SYSV_TMP_APP_DIR}
+      else
+        if ask "Are you sure you want to completely remove this directory: ${SYSV_TMP_APP_DIR}?" N; then
+          rm -rvf ${SYSV_TMP_APP_DIR}
+        fi
+      fi
+    fi
+  fi
+}
+
+function setup_sysv_beat_config() {
+  NEW_FILE=false
+  if [[ -f "${SYSV_DST_BEATCONF}" ]]; then
+    echo "A exists at : ${SYSV_DST_BEATCONF}!"
+    if ask "Do you want to replace this file?" N; then
+      sudo cp ${SYSV_SRC_BEATCONF} ${SYSV_DST_BEATCONF}
+      NEW_FILE=true
+    fi
+  else
+    sudo cp ${SYSV_SRC_BEATCONF} ${SYSV_DST_BEATCONF}
+    NEW_FILE=true
+  fi
+  if [[ ${NEW_FILE} ]]; then
+    echo "new -> ${SYSV_DST_BEATCONF}"
+    if [ -e ${SYSV_DST_BEATCONF} ]; then
+      _editfile 'HOME' 'PROJECT_PATH' "'" ${SYSV_DST_BEATCONF}
+      _editfile 'PROJECT_PATH' 'PROJECT_PATH' "'" ${SYSV_DST_BEATCONF}
+      _editfile 'DJANGO_PROJECT_ROOT' 'DJANGO_PROJECT_ROOT' "'" ${SYSV_DST_BEATCONF}
+      _editfile 'DJANGO_SETTINGS_MODULE' 'DJANGO_SETTINGS_MODULE' "'" ${SYSV_DST_BEATCONF}
+      _editfile 'PYTHONPATH' 'PYTHONPATH' "'" ${SYSV_DST_BEATCONF}
+      _editfile 'CELERYD_NODES' 'CELERYD_NODES' "'" ${SYSV_DST_BEATCONF}
+      _editfile 'CELERY_BIN' 'CELERY_BIN' "'" ${SYSV_DST_BEATCONF}
+      sudo sed -E -i -e "s~^CELERY_APP=.*~CELERY_APP='${DJANGO_SRC_NAME}.celery_app:app'~" ${SYSV_DST_BEATCONF}
+      _editfile 'CELERY_BIN' 'CELERY_BIN' "'" ${SYSV_DST_BEATCONF}
+      _editfile 'CELERY_CHDIR' 'DJANGO_PROJECT_ROOT' "'" ${SYSV_DST_BEATCONF}
+      _editfile 'CELERYD_OPTS' 'CELERYD_OPTS' "'" ${SYSV_DST_BEATCONF}
+      _editfile 'CELERYD_PID_FILE' 'CELERYD_PID_FILE' "'" ${SYSV_DST_BEATCONF}
+      # _editfile 'CELERYD_LOG_FILE' 'CELERYD_LOG_FILE' "'" ${SYSV_DST_BEATCONF}
+      _editfile 'CELERY_USER' 'CELERY_UNIX_USER' "'" ${SYSV_DST_BEATCONF}
+      _editfile 'CELERY_GROUP' 'CELERY_UNIX_GROUP' "'" ${SYSV_DST_BEATCONF}
+      # CELERYBEAT
+      _editfile 'CELERYBEAT_PID_FILE' 'CELERYBEAT_PID_FILE' "'" ${SYSV_DST_BEATCONF}
+      _editfile 'CELERYBEAT_OPTS' 'CELERYBEAT_OPTS' "'" ${SYSV_DST_BEATCONF}
+      # WEBQUIT VARS
+      _editfile 'DJANGO_ENV_PATH' 'DJANGO_ENV_PATH' "'" ${SYSV_DST_BEATCONF}
+      _editfile 'ENV_FILE' 'ENV_FILE' "'" ${SYSV_DST_BEATCONF}
+    fi
+  fi
+}
+
+# function setup_log_files() {
+#   # create log directory, set permissions and create/update file permissions
+#   if [[ ! -d "${CELERY_LOG_DIR}" ]]; then
+#     sudo mkdir -p ${CELERY_LOG_DIR}
+#     #sudo chown ${CELERY_UNIX_USER}:${CELERY_UNIX_GROUP} ${CELERY_LOG_DIR}
+#     sudo chown root:root ${CELERY_LOG_DIR}
+#   else
+#     sudo chown ${CELERY_UNIX_USER}:${CELERY_UNIX_GROUP} ${CELERY_LOG_DIR}
+#   fi
+
+#   if ls `echo ${CELERYD_LOG_FILE} | sed s/%n/*/g` 1> /dev/null 2>&1; then
+#     sudo chown -v ${CELERY_UNIX_USER}:${CELERY_UNIX_GROUP} `echo ${CELERYD_LOG_FILE} | sed s/%n/*/g`
+#   fi
+
+#   if [[ -f "${CELERYBEAT_LOG_FILE}" ]]; then
+#     sudo chown -v ${CELERY_UNIX_USER}:${CELERY_UNIX_GROUP} ${CELERYBEAT_LOG_FILE}
+#   fi
+
+#   sudo setfacl -R -m d:g:${CELERY_UNIX_GROUP}:rwX,g:${CELERY_UNIX_GROUP}:rwX ${LOG_DIR} ${LOG_FILE}
+#   sudo setfacl -R -m d:g:${CELERY_UNIX_USER}:rwX,g:${CELERY_UNIX_USER}:rwX ${LOG_DIR} ${LOG_FILE}
+# }
+
+function setup_celery_initd() {
+  echo "system v setup..."
+  # celery env file
+  setup_celeryd_sysv_config;
+  setup_celeryd_sysv_script;
+  setup_sysv_beat_config;
+  setup_sysv_beat_script;
+  setup_sysv_tmp_dir;
+}
+
+
+### TODO?!?! tmpfiles.d may take care of this..
+function fix_file_permissions() {
+    echo "updating file permissions"
+
+    # sudo setfacl -R -m d:g:${CELERY_UNIX_GROUP}:rwX,g:${CELERY_UNIX_GROUP}:rwX ${LOG_DIR}
+
+
+
+    #sudo chown -Rvf ${CELERY_UNIX_USER}:${CELERY_UNIX_GROUP} "${CELERY_LOG_DIR}"
+    # CELERYD_NODES_ARRAY=(${CELERYD_NODES})
+    # echo "counter: ${#CELERYD_NODES_ARRAY[@]}"
+    # for i in "${CELERYD_NODES_ARRAY[@]}"; do
+    #     echo $CELERYD_PID_FILE | sed -E -e "s~%N~$i~"
+    # done
+}
+
+
+function install_app() {
+    echo "Installing ${PROJECT_NAME} scripts"
+    # Install the celery scripts into etc
+    if ask "Do you want to install the celery ${sys_type_txt} scripts?" N; then
+        stop_running_daemons;
+        create_daemon_user;
+        if [[ $sysv -eq 0 ]]; then
+          echo "Installing systemd scripts"
+          setup_celery_systemd;
+        else
+          echo "Installing system v scripts"
+          setup_celery_initd;
+        fi
+        create_rabbitmq_user;
+        # configure rsyslog for application
+        setup_rsyslog_file;
+        # create logging directory
+        # setup_log_files; ## i think we use the sudo systemd-tmpfiles --create step to fix this now
+
+        #fix_file_permissions;
+
+        echo "#########################################"
+        echo "# Completed install of services!        #"
+        echo "#########################################"
+        echo ""
+        if [[ ! $sysv ]]; then
+          echo "$ sudo systemctl enable ${PROJECT_NAME}-${DEPLOY_TYPE}-celery.service"
+          echo "$ sudo systemctl enable ${PROJECT_NAME}-${DEPLOY_TYPE}-celerybeat.service"
+          echo "$ sudo systemctl start ${PROJECT_NAME}-${DEPLOY_TYPE}-celery.service"
+          echo "$ sudo systemctl start ${PROJECT_NAME}-${DEPLOY_TYPE}-celerybeat.service"
+          echo "$ sudo systemd-tmpfiles --create"
+          echo "## If reloading systemd services, reload with:"
+          echo "$ sudo systemctl daemon-reload"
+        else
+          echo "$ sudo update-rc.d ${PROJECT_NAME}-${DEPLOY_TYPE}-celeryd defaults"
+          echo "$ sudo update-rc.d ${PROJECT_NAME}-${DEPLOY_TYPE}-celeryd enable"
+          echo "$ sudo update-rc.d ${PROJECT_NAME}-${DEPLOY_TYPE}-celerybeat defaults"
+          echo "$ sudo update-rc.d ${PROJECT_NAME}-${DEPLOY_TYPE}-celerybeat enable"
+
+          echo "$ sudo service ${PROJECT_NAME}-${DEPLOY_TYPE}-celeryd start"
+          echo "$ sudo service ${PROJECT_NAME}-${DEPLOY_TYPE}-celeryd status"
+          echo "$ sudo service ${PROJECT_NAME}-${DEPLOY_TYPE}-celerybeat start"
+          echo "$ sudo service ${PROJECT_NAME}-${DEPLOY_TYPE}-celerybeat status"
+        fi
+        echo " For Logging check in: ${CELERY_LOG_DIR}"
+    fi
+    # check file permissions
+    #echo "Change report builder save : $MEDIA_ROOT/report_files"
+
+}
+
+function uninstall_app() {
+    echo "Uninstalling ${PROJECT_NAME} scripts"
+    if ask "Do you want to uninstall the celery scripts?" N; then
+        stop_running_daemons;
+        uninstall_app_systemd;
+        remove_sysv_tmp_dir;
+        remove_daemon_user;
+        remove_rabbitmq_user;
+    fi
+}
+
+function show_help() {
+    echo -e "$0 [${PROJECT_NAME} setup script]"
+    echo -e " -h\t\tHelp message."
+    echo -e " -v\t\tVerbose messaging"
+    echo -e " -s\t\tUse system V scripts instead of systemd"
+    echo -e " -i\t\tInstall scripts (systemd default)"
+    echo -e " -u\t\tUninstall scripts"
+    echo -e " -r\t\tReinstall (removes then installs)"
+}
+
+
+OPTIND=1
+verbose=0
+sysv=0
+sys_type_txt="systemd"
+go_install=0
+go_uninstall=0
+go_reinstall=0
+
+while getopts "h?vsiur" opt; do
+  case "$opt" in
+  h|\?)
+    show_help
+    exit 0
+    ;;
+  v)
+    verbose=1
+    ;;
+  s)
+    sysv=1
+    sys_type_txt="System V"
+    ;;
+  i)
+    go_install=1
+    ;;
+  u)
+    go_uninstall=1
+    ;;
+  r)
+    go_reinstall=1
+    ;;
+  esac
+done
+
+shift $((OPTIND-1))
+
+[ "$1" = "--" ] && shift
+
+if [ $go_install == $go_uninstall ] && [ $go_reinstall = 0 ]; then
+    show_help
+    exit 0
+else
+    if [[ $go_install == 1 ]]; then
+        install_app
+        exit 0
+    elif [[ $go_uninstall == 1 ]]; then
+        uninstall_app
+        exit 0
+    elif [[ $go_reinstall == 1 ]]; then
+        uninstall_app
+        install_app
+        exit 0
+    fi
+    # echo "verbose: $verbose go_install: $go_install go_uninstall: $go_uninstall"
+fi

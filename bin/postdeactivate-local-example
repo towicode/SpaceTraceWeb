@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# This hook is sourced after this virtualenv is deactivated.
+
+if type check_env_config_loaded >/dev/null; then
+  unset -f check_env_config_loaded
+fi
+
+if type project_help >/dev/null; then
+  unset -f project_help
+fi
+
+if type backup_project_db >/dev/null; then
+  unset -f backup_project_db
+fi
+
+if type backup_static_folder >/dev/null; then
+  unset -f backup_static_folder
+fi
+
+if type backup_media_folder >/dev/null; then
+  unset -f backup_media_folder
+fi
+
+if type restore_project_db >/dev/null; then
+  unset -f restore_project_db
+fi
+
+if type drop_project_db >/dev/null; then
+  unset -f drop_project_db
+fi
+
+if type create_project_db >/dev/null; then
+  unset -f create_project_db
+fi
+
+if type create_project_user >/dev/null; then
+  unset -f create_project_user
+fi
+
+if type drop_project_user >/dev/null; then
+  unset -f drop_project_user
+fi
+
+if type prj_pyclean >/dev/null; then
+  unset -f pyclean
+fi

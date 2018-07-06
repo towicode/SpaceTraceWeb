@@ -103,7 +103,7 @@
             <div class="mdl-card__title">
               <h2 class="mdl-card__title-text">{data.title}</h2>
             </div>
-            <div class="mdl -card__supporting-text">
+            <div class="mdl-card__supporting-text">
               Step {data.step} <br/>
             </div>
             <div class="mdl-card__actions mdl-card--border">
@@ -128,16 +128,26 @@
                 </div>
 
                 <div rv-if="data.step | = 2">
-                    <div class="waiting_text"> Waiting </div>
-                    <div id="p2" class="mdl-progress mdl-js-progress mdl-progress__indeterminate"></div>
+                    <div class="waiting_text"> <strong>Waiting</strong>  </div>
+                    <div>
+                        We just stored your submitted information, we are now waiting for the server to retrieve that information and send back updates.
+                    </div>
+                    <div>
+                      <small> This page will update automatically, there is no need to do anything except wait</small>
+                    </div>
+                    <div>
+                      <img src="{% static "spaceSession/images/source.gif" %}" height="75px"/>
+                    </div>
                 </div>
 
                 <div rv-if="data.step | = 3">
                     <div rv-html="data.img">
                     </div>
                     <div>
-                        <label for="my_label">Label</label>
-                        <input type="text" name="" id="my_label">
+                        <div class="mdl-textfield mdl-js-textfield mdl-textfield--floating-label">
+                            <input rv-value="data.label" class="mdl-textfield__input" type="text" />
+                            <label class="mdl-textfield__label">Label</label>
+                        </div>
                     </div>
                     <button type="submit" onclick="submitStepThree()" class="mdl-button mdl-js-button mdl-button--raised mdl-js-ripple-effect">
                         Submit
@@ -145,8 +155,16 @@
                 </div>
 
                 <div rv-if="data.step | = 4">
-                    <div class="waiting_text"> Waiting </div>
-                    <div id="p2" class="mdl-progress mdl-js-progress mdl-progress__indeterminate"></div>
+                    <div class="waiting_text"> <strong>Waiting</strong>  </div>
+                    <div>
+                        We just stored your submitted information, we are now waiting for the server to retrieve that information and send back updates.
+                    </div>
+                    <div>
+                      <small> This page will update automatically, there is no need to do anything except wait</small>
+                    </div>
+                    <div>
+                      <img src="{% static "spaceSession/images/source.gif" %}" height="75px"/>
+                    </div>
                 </div>
 
                 <div rv-if="data.step | = 5">

@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# Hagan Franks <hagan.franks@gmail.com>
+# Version 0.0.1
+
+# exit script upon error
+
+set -e
+
+# If no .env found, exit!
+EXIT_ON_NO_ENV=1
+
+abs_path() {
+  perl -MCwd -le '
+    for (@ARGV) {
+      if ($p = Cwd::abs_path $_) {
+        print $p;
+      } else {
+        warn "abs_path: $_: $!\n";
+        $ret = 1;
+      }
+    }
+    exit $ret' "$@"
+}
+
+script_path=$(abs_path $0)
+script_dir=$(dirname ${script_path})
+
+## setup exit trap
+SRC_SCRIPT=${script_dir}/lib/setup-exit-trap.sh
+SRC_NUM=1
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    exit 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  exit 1
+fi
+
+## setup required binaries
+SRC_SCRIPT=${script_dir}/lib/setup-binary-vars.sh
+SRC_NUM=2
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    return 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  return 1
+fi
+
+## load project .env file
+SRC_SCRIPT=${script_dir}/lib/load-env-vars.sh
+SRC_NUM=3
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    return 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  return 1
+fi
+
+## add ask-function
+SRC_SCRIPT=${script_dir}/lib/functions.sh
+SRC_NUM=4
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    return 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  return 1
+fi
+
+if [[ -z ${LEGACY_PG_DB+x} ]]; then
+  echo "ERROR-1: 'LEGACY_PG_DB' not defined as a shell variable."
+  echo "Rerun with LEGACY_PG_DB='database name' $0"
+  exit 1
+fi
+
+if [[ -z ${ADMIN_DB_USER+x} ]]; then
+  echo "ERROR-2: 'ADMIN_DB_USER' not defined as a shell variable."
+  echo "To fix: add 'ADMIN_DB_USER' line to the .env file."
+  exit 1
+fi
+
+if [[ -z ${ADMIN_DB_PASS+x} ]]; then
+  echo "ERROR-3: 'ADMIN_DB_PASS' not defined as a shell variable."
+  echo "To fix: add 'ADMIN_DB_PASS' line to the .env file."
+  exit 1
+fi
+
+if [[ -z ${LEGACY_PG_PORT+x} ]]; then
+  echo "ERROR-4: 'LEGACY_PG_PORT' not defined as a shell variable."
+  echo "To fix: add 'LEGACY_PG_PORT' line to the .env file."
+  exit 1
+fi
+
+if [[ -z ${LEGACY_PG_HOST+x} ]]; then
+  echo "ERROR-3: 'LEGACY_PG_HOST' not defined as a shell variable."
+  echo "To fix: add 'LEGACY_PG_HOST' line to the .env file."
+  exit 1
+fi
+
+
+if ask "Do you want to drop the '${LEGACY_PG_DB}' database?" N; then
+  set +e
+  PGPASSWORD=${ADMIN_DB_PASS} ${DROPDB} --user=${ADMIN_DB_USER} --host=${LEGACY_PG_HOST} --port=${LEGACY_PG_PORT} ${LEGACY_PG_DB}
+  set -e
+  PGPASSWORD=${ADMIN_DB_PASS} ${CREATEDB} --user=${ADMIN_DB_USER} --host=${LEGACY_PG_HOST} --port=${LEGACY_PG_PORT} ${LEGACY_PG_DB}
+fi
+
+BACKUPS=($(find ${script_dir}/../backups -type f -name "*ashline-legacy-data.dump" -exec basename {} \; | sort -r | tr '\n' ' '))
+BACKUPS_CNTR=$(find ${script_dir}/../backups -type f -name "*ashline-legacy-data.dump" -print0 | xargs -0 -I{} echo {} | wc -l)
+if [[ ${BACKUPS_CNTR} -gt 1 ]]; then
+  BACKUPS=${BACKUPS[0]}
+fi
+if [[ ${BACKUPS_CNTR} -ne 0 ]]; then
+  echo "Restoring from : ${BACKUPS[0]}"
+  set +e
+  PGPASSWORD=${ADMIN_DB_PASS} /usr/bin/pg_restore --host=${LEGACY_PG_HOST} --port=${LEGACY_PG_PORT} --user=${ADMIN_DB_USER} -v --clean -O -Fc --dbname=${LEGACY_PG_DB} --jobs=4 ${script_dir}/../backups/${BACKUPS[0]} 1>/dev/null
+  set -e
+
+  PGPASSWORD=${ADMIN_DB_PASS} ${VACUUMDB} --host=${LEGACY_PG_HOST} --user=${ADMIN_DB_USER} --port=${LEGACY_PG_PORT} -z -f ${LEGACY_PG_DB}
+
+  PGPASSWORD=${ADMIN_DB_PASS} /usr/bin/psql --user=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -c "GRANT ALL PRIVILEGES ON DATABASE ${LEGACY_PG_DB} TO ${DJANGO_DB_USER};"
+
+  ALTER_TABLE_CNTR=0
+  for tbl in `PGPASSWORD=${ADMIN_DB_PASS} /usr/bin/psql --user=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -qAt -c "select tablename from pg_tables where schemaname = 'public';" ${LEGACY_PG_DB}`; do
+    PGPASSWORD=${ADMIN_DB_PASS} /usr/bin/psql --user=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -c "alter table \"$tbl\" owner to ${DJANGO_DB_USER}" ${LEGACY_PG_DB} > /dev/null
+    if [[ $? -eq 0 ]]; then
+      ALTER_TABLE_CNTR=$((ALTER_TABLE_CNTR+1))
+    fi
+  done
+  echo "ALTER TABLE x ${ALTER_TABLE_CNTR}"
+
+  ALTER_SEQUENCE_CNTR=0
+  for tbl in `PGPASSWORD=${ADMIN_DB_PASS} /usr/bin/psql --user=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -qAt -c "select sequence_name from information_schema.sequences where sequence_schema = 'public';" ${LEGACY_PG_DB}` ; do
+      PGPASSWORD=${ADMIN_DB_PASS} /usr/bin/psql --user=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -c "alter table \"$tbl\" owner to ${DJANGO_DB_USER}" ${LEGACY_PG_DB} 1> /dev/null
+      if [[ $? -eq 0 ]]; then
+          ALTER_SEQUENCE_CNTR=$((ALTER_SEQUENCE_CNTR+1))
+      fi
+  done
+  echo "ALTER SEQUENCE x ${ALTER_SEQUENCE_CNTR}"
+
+  ALTER_SCHEMA_CNTR=0
+  for tbl in `PGPASSWORD=${ADMIN_DB_PASS} /usr/bin/psql --user=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -qAt -c "select table_name from information_schema.views where table_schema = 'public';" ${LEGACY_PG_DB}` ; do
+      PGPASSWORD=${ADMIN_DB_PASS} /usr/bin/psql --user=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} -c "alter table \"$tbl\" owner to ${DJANGO_DB_USER}" ${LEGACY_PG_DB} 1> /dev/null
+      if [[ $? -eq 0 ]]; then
+          ALTER_SCHEMA_CNTR=$((ALTER_SCHEMA_CNTR+1))
+      fi
+  done
+  echo "ALTER SCHEMA x ${ALTER_SCHEMA_CNTR}"
+
+  PGPASSWORD=${ADMIN_DB_PASS} /usr/bin/psql --user=${ADMIN_DB_USER} --host=${DJANGO_DB_HOST} --port=${DJANGO_DB_PORT} --dbname=${LEGACY_PG_DB} -c "GRANT ALL ON SCHEMA public TO public;"
+fi
+
+
+

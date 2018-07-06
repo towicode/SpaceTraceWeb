@@ -1,0 +1,413 @@
+#!/usr/bin/env bash
+# Hagan Franks 2018-03-02 franks ȦŦ email Ḓ0Ŧ arizona Ḓ0Ŧ edu
+
+# Note to use this you must 1st setup pyenv on your shell
+# $ git clone https://github.com/pyenv/pyenv.git ~/.pyenv
+# $ git clone https://github.com/pyenv/pyenv-virtualenv.git ~/.pyenv/plugins/pyenv-virtualenv
+# $ git clone https://github.com/yyuu/pyenv-virtualenvwrapper.git ~/.pyenv/plugins/pyenv-virtualenvwrapper
+# Modify your shell's configuration (example .zshrc):
+# ## PYENV SETUP
+# export PYENV_ROOT="$HOME/.pyenv"
+# export PYENV_VIRTUALENV_DISABLE_PROMPT=1
+# export PATH="$PYENV_ROOT/bin:$PATH"
+# if which pyenv > /dev/null; then eval "$(pyenv init -)"; fi
+# if which pyenv-virtualenv-init > /dev/null; then eval "$(pyenv virtualenv-init -)"; fi
+
+# ## Virtualenvwrapper
+# export WORKON_HOME=$HOME/.virtualenvs
+# export VIRTUALENVWRAPPER_PYTHON=$(pyenv which python)
+# export VIRTUALENVWRAPPER_VIRTUALENV=$(pyenv which virtualenv)
+# export PYENV_VIRTUALENVWRAPPER_PREFER_PYVENV="true"
+# if [[ -n $(pyenv which virtualenvwrapper.sh) ]]; then
+#   pyenv virtualenvwrapper
+#   if [[ -n $(pyenv which virtualenvwrapper.sh) ]]; then
+#     echo "Error loading virtualenvwrapper with pyenv!"
+#   fi
+# fi
+#
+#
+# Installing a python:
+# PYTHON_CONFIGURE_OPTS="--enable-shared" pyenv install --force 2.7.14
+# PYTHON_CONFIGURE_OPTS="--enable-shared" pyenv install --force 3.6.4
+
+#_SKIP_VIRTUALENVWRAPPER_CHECK=true
+DEBUG=true
+# exit script upon error
+# set -e
+# [ -n "$DEBUG" ] && set -x
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+
+## setup exit trap
+SRC_SCRIPT=${script_dir}/lib/setup-exit-trap.sh
+SRC_NUM=1
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    exit 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  exit 1
+fi
+
+## setup required binaries
+SRC_SCRIPT=${script_dir}/lib/setup-binary-vars.sh
+SRC_NUM=2
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    exit 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  exit 1
+fi
+
+## load project .env file
+SRC_SCRIPT=${script_dir}/lib/load-env-vars.sh
+SRC_NUM=3
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    exit 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  exit 1
+fi
+
+## add ask-function
+SRC_SCRIPT=${script_dir}/lib/functions.sh
+SRC_NUM=4
+if test -f ${SRC_SCRIPT}; then
+  . "${SRC_SCRIPT}" || {
+    echo "${SRC_SCRIPT} had an error! exiting.."
+    exit 1
+  }
+else
+  echo "ERROR-${SRC_NUM}: missing ${SRC_SCRIPT}!"
+  exit 1
+fi
+
+# Check and make sure we're not inside an active virtual environment
+[ ! -z "$VIRTUAL_ENV" ] && echo "ERROR-6: Current active virtualenv, please deactivate 1st." && exit 1;
+
+# Verify that PROJECT_PATH is defined
+[ -z "${PROJECT_PATH+x}" ] && echo "ERROR-7: .env does not define our PROJECT_PATH environment variable!" && exit 1
+[ ! -z "${PROJECT_PATH+x}" ] && [ ! -z "${DEBUG+x}" ] && [ ${DEBUG} ] && echo "\${PROJECT_PATH} = ${PROJECT_PATH}"
+
+# Verify that PROJECT_NAME is defined
+[ -z "${PROJECT_NAME+x}" ] && echo "ERROR-8: .env does not define our PROJECT_NAME environment variable!" && exit 1
+[ ! -z "${PROJECT_NAME+x}" ] && [ ! -z "${DEBUG+x}" ] && [ ${DEBUG} ] && echo "\${PROJECT_NAME} = ${PROJECT_NAME}"
+
+# Verify that DEPLOY_TYPE is defined
+[ -z "${DEPLOY_TYPE+x}" ] && echo "ERROR-9: .env does not define our DEPLOY_TYPE environment variable!" && exit 1
+[ ! -z "${DEPLOY_TYPE+x}" ] && [ ! -z "${DEBUG+x}" ] && [ ${DEBUG} ] && echo "\${DEPLOY_TYPE} = ${DEPLOY_TYPE}"
+
+# Check project path exists
+[ ! -d  "${PROJECT_PATH}" ] && echo "ERROR-10: ${PROJECT_PATH} does not exist!" && exit 1
+
+# Check that .env defined PYENV_VERSION OR $PROJECT_PATH/.python-version
+if [[ -z "${PYENV_VERSION+x}" || -z "${PYENV_VERSION}" ]]; then
+  # try loading from the .python-version file
+  if [[ -f "${PROJECT_PATH}/.python-version" ]]; then
+    PYENV_VERSIONS=($(cat "${PROJECT_PATH}/.python-version" | tr '\n' ':' | ${SED} 's/:$/\n/' | { IFS=':' read -r -a PYENV_VERSIONS; join_by ' ' ${PYENV_VERSIONS[@]}; }))
+    # Sort our python versions from .python-version
+    PYENV_VERSIONS=($(sort_str ${PYENV_VERSIONS[@]}))
+  else
+    echo "ERROR-XX: You are either missing the .env variable 'PYENV_VERSION' or setup project via pyenv local <python version>!"
+    exit 1
+  fi
+else
+  PYENV_VERSIONS=($(echo $PYENV_VERSION | tr '\n' ':' | ${SED} 's/:$/\n/' | { IFS=':' read -r -a PYENV_VERSIONS; join_by ' ' ${PYENV_VERSIONS[@]}; }))
+  # Sort our python versions from .python-version
+  PYENV_VERSIONS=($(sort_str ${PYENV_VERSIONS[@]}))
+fi
+
+[ ! ${#PYENV_VERSIONS[@]} -eq 0 ] && [ ! -z "${DEBUG+x}" ] && [ ${DEBUG} ] && echo "\${PYENV_VERSIONS} = `join_by : ${PYENV_VERSIONS[@]}`"
+
+# 1st check if we have a symbolic link in our $WORKON_HOME
+if [ -h "${WORKON_HOME}/${PROJECT_NAME}-${DEPLOY_TYPE}" ] || [ -d "${WORKON_HOME}/${PROJECT_NAME}-${DEPLOY_TYPE}" ]; then
+  echo "ERROR-11: Pre-existing virtualenv *symlink* or *dir* at destination: ${WORKON_HOME}/${PROJECT_NAME}-${DEPLOY_TYPE}!"
+  exit 1
+fi
+
+# Verify that DJANGO_ENV_HOME is defined
+if [ -z "${DJANGO_ENV_HOME+x}" ]; then
+  echo "ERROR-12a: .env does not define the DJANGO_ENV_HOME variable!"
+  exit 1
+fi
+[ ! -z "${DJANGO_ENV_HOME+x}" ] && [ ! -z "${DEBUG+x}" ] && [ ${DEBUG} ] && echo "\${DJANGO_ENV_HOME} = ${DJANGO_ENV_HOME}"
+
+# Create the DJANGO_ENV_HOME directory if needed
+if [ ! -d "${DJANGO_ENV_HOME}" ]; then
+  mkdir -p ${DJANGO_ENV_HOME}
+fi
+
+# Verify that DJANGO_ENV_NAME is defined
+if [ -z "${DJANGO_ENV_NAME+x}" ]; then
+  echo "ERROR-12b: .env does not define the DJANGO_ENV_NAME variable!"
+  exit 1
+fi
+[ ! -z "${DJANGO_ENV_NAME+x}" ] && [ ! -z "${DEBUG+x}" ] && [ ${DEBUG} ] && echo "\${DJANGO_ENV_NAME} = ${DJANGO_ENV_NAME}"
+
+# Verify that DJANGO_ENV_PATH is defined
+if [ -z "${DJANGO_ENV_PATH+x}" ]; then
+  echo "ERROR-12c: .env does not define the DJANGO_ENV_PATH variable!"
+  exit 1
+fi
+[ ! -z "${DJANGO_ENV_PATH+x}" ] && [ ! -z "${DEBUG+x}" ] && [ ${DEBUG} ] && echo "\${DJANGO_ENV_PATH} = ${DJANGO_ENV_PATH}"
+
+# Verify that our project envs folder wasn't already created
+_MATCHES=($(find $DJANGO_ENV_HOME -type d \( -name "${DJANGO_ENV_NAME}*" \)))
+for dir in ${_MATCHES[@]}; do
+  echo $dir
+  if [[ -d "$dir" ]]; then
+    echo "ERROR-13: virtualenv destination already exists! [$dir]"
+    echo "You need a clean $DJANGO_ENV_HOME without anything in it like ${DJANGO_ENV_NAME}* "
+    exit 1
+  fi
+done
+
+[ ! -f "${PYTHON_REQUIREMENT_FILE}" ] && echo "ERROR-18: the requirements file is missing: $PYTHON_REQUIREMENT_FILE!" && exit 1
+
+if [ -z "${SHELL+x}" ]; then
+  echo "ERROR-14: Missing SHELL environment variable! (Should be present in bash/zsh/etc...)."
+  exit 1
+fi
+[ ! -z "${SHELL+x}" ] && [ ! -z "${DEBUG+x}" ] && [ ${DEBUG} ] && echo "\${SHELL} = ${SHELL}"
+### Load our pyenv stuff even if shell already has it ###
+PYENV_VIRTUALENV_DISABLE_PROMPT=1
+
+function_exists pyenv && echo "pyenv function already configured." || { echo "setting up pyenv..."; eval "$(pyenv init -)"; }
+function_exists pyenv || { echo "Error: Could not initialize pyenv!"; exit 1; }
+
+# Use pyenv to swap to version we're using
+# NOTE: lower version should be first so python vs python3 are correct!
+if [ ${#PYENV_VERSIONS[@]} -eq 0 ]; then
+  echo "ERROR: PYENV_VERSIONS not set in .env or .python-version is missing in project"
+  exit 1
+elif [ ${#PYENV_VERSIONS[@]} -eq 1 ]; then
+  echo "One pyenv version.."
+  PYENV_VERSION=${PYENV_VERSIONS[0]}
+  echo "\${PYENV_VERSION} = ${PYENV_VERSION}"
+  echo "Setting pyenv python shell to $PYENV_VERSION"
+  pyenv shell ${PYENV_VERSION}
+else
+  ## Multiple versions of python could be supported but we're not atm.
+  echo "ERROR: Must use either python 2 or 3, do not mix *yet*!"
+  exit 1
+fi
+
+# Pull the python path from pyenv (Force even if defined in the .env)
+PYTHON_PATH=$(pyenv which python)
+[ ! -z "${PYTHON_PATH+x}" ] && [ ! -z "${DEBUG+x}" ] && [ ${DEBUG} ] && echo "\${PYTHON_PATH} = ${PYTHON_PATH}"
+
+# setup a local postactivate script
+if [ ! -z ${LOCAL_POSTACTIVATE+x} ] && [ ! -z ${SOURCE_POSTACTIVATE+x} ] && [ -f ${SOURCE_POSTACTIVATE} ]; then
+  cp ${SOURCE_POSTACTIVATE} ${LOCAL_POSTACTIVATE}
+  chmod +x ${LOCAL_POSTACTIVATE}
+elif [ ! -z ${LOCAL_POSTACTIVATE+x} ]; then
+  cp ${DJANGO_ENV_PATH}/bin/postactivate.orig ${LOCAL_POSTACTIVATE}
+  chmod +x ${LOCAL_POSTACTIVATE}
+  echo "main_project_help" >> ${LOCAL_POSTACTIVATE}
+fi
+
+# setup a local postdeactivate script
+if [ ! -z ${LOCAL_POSTDEACTIVATE+x} ] && [ ! -z ${SOURCE_POSTDEACTIVATE+x} ] && [ -f ${SOURCE_POSTDEACTIVATE} ]; then
+  cp ${SOURCE_POSTDEACTIVATE} ${LOCAL_POSTDEACTIVATE}
+  chmod +x ${LOCAL_POSTDEACTIVATE}
+elif [ ! -z ${LOCAL_POSTDEACTIVATE+x} ]; then
+  cp ${DJANGO_ENV_PATH}/bin/postdeactivate.orig ${LOCAL_POSTDEACTIVATE}
+  chmod +x ${LOCAL_POSTDEACTIVATE}
+fi
+
+## Each pyenv we have defined also need the virtualenv, virtualenv-clone, virtualenvwrapper pip libraries.
+for python_ver in "${PYENV_VERSIONS[@]}"
+do
+  echo "Installing virtualenv, virtualenv-clone and virtualenvwrapper for $python_ver"
+  # change python
+  pyenv shell $python_ver
+  if [ $? -ne 0 ]; then
+    echo "ERROR: Missing python $python_ver"
+    exit 1
+  fi
+  PIP_BIN=$(pyenv which pip)
+  PYTHON_BIN=$(pyenv which python)
+  # Load virtualenv python lib
+  if [[ ! -n "$(pyenv whence virtualenv | grep $python_ver)" ]]; then
+    echo "virtualenv missing for python $python_ver."
+    # 1st we rip out all instances, in case we have other shells with it.
+    $($PIP_BIN show virtualenv > /dev/null) && $SHELL -c "$PIP_BIN uninstall virtualenv --yes --quiet"
+    # 2nd try to install it.
+    $($PIP_BIN install virtualenv --quiet) && echo "virtualenv [Installed]"
+    if [[ ! -n "$(pyenv whence virtualenv | grep $python_ver)" ]]; then
+      echo "Error: Failed to install virtualenv!"
+      exit 1
+    fi
+  else
+    echo "virtualenv for $python_ver already installed."
+    # Load virtualenv for pyenv (if it hasn't been already)
+    if which pyenv-virtualenv-init > /dev/null; then eval "$(pyenv virtualenv-init -)"; fi
+  fi
+  PYENV_VIRTUALENVWRAPPER_PREFER_PYVENV='true'
+
+  # Load virtualenv-clone python lib
+  if [[ ! -n "$(pyenv whence virtualenv-clone | grep $python_ver)" ]]; then
+    echo "virtualenv-clone missing for python $python_ver."
+    $($PIP_BIN show virtualenv-clone > /dev/null) && $($PIP_BIN uninstall virtualenv-clone --yes --quiet)
+    $($PIP_BIN install virtualenv-clone --quiet) && echo "virtualenv-clone [Installed]"
+    if [[ ! -n "$(pyenv whence virtualenv-clone | grep $python_ver)" ]]; then
+      echo "Error: Failed to install virtualenv-clone!"
+      exit 1
+    fi
+  else
+    echo "virtualenv-clone for $python_ver already installed."
+  fi
+
+  # Load virtualenvwrapper python lib
+  if ! $(pyenv which virtualenvwrapper.sh &>/dev/null); then
+    $($PIP_BIN install virtualenvwrapper --quiet) && echo "virtualenvwrapper  [Installed]"
+    if ! $(pyenv which virtualenvwrapper.sh &>/dev/null); then
+      echo "Error: Failed to install virtualenvwrapper!"
+      exit 1
+    fi
+  else
+    echo "virtualenvwrapper for $python_ver already installed."
+    source $(pyenv which virtualenvwrapper.sh)
+  fi
+
+  ## Load wrapper scripts for creating our virtualwrapper!
+  # pyenv virtualenvwrapper
+  # VIRTUALENVWRAPPER_PYTHON and PYTHON_PATH are the same.
+
+  VIRTUALENVWRAPPER_PYTHON=${PYTHON_PATH}
+  [ ! -z "${VIRTUALENVWRAPPER_PYTHON+x}" ] && [ ! -z "${DEBUG+x}" ] && [ ${DEBUG} ] && echo "\${VIRTUALENVWRAPPER_PYTHON} = ${VIRTUALENVWRAPPER_PYTHON}"
+
+  # Python 2.7 does not support this?
+  # PYENV_VIRTUALENVWRAPPER_PREFER_PYVENV='false'
+
+  VIRTUALENVWRAPPER_VIRTUALENV=$(pyenv which virtualenv 2>/dev/null)
+  [ ! -z "${VIRTUALENVWRAPPER_VIRTUALENV+x}" ] && [ ! -z "${DEBUG+x}" ] && [ ${DEBUG} ] && echo "\${VIRTUALENVWRAPPER_VIRTUALENV} = ${VIRTUALENVWRAPPER_VIRTUALENV}"
+
+  ## And create using our shell environment (bash/zsh/...)
+  $SHELL -c "PYENV_ROOT=\"${PYENV_ROOT}\" \
+  PYENV_VIRTUALENV_DISABLE_PROMPT=1 \
+  PATH=\"\$PYENV_ROOT/bin:\$PATH\" \
+  eval \"\$(pyenv init -)\"; \
+  eval \"\$(pyenv virtualenv-init -)\"; \
+  pyenv shell $python_ver; \
+  source \$(pyenv which virtualenvwrapper.sh); \
+  WORKON_HOME=${DJANGO_ENV_HOME} \
+  mkvirtualenv --no-site-packages --always-copy --python=${VIRTUALENVWRAPPER_PYTHON} ${DJANGO_ENV_NAME}-$python_ver \
+  "
+
+  # Link our newly minted virtualenv folder
+  if [ -d "${DJANGO_ENV_HOME}/${DJANGO_ENV_NAME}-$python_ver" ]; then
+    ln -s ${DJANGO_ENV_HOME}/${DJANGO_ENV_NAME}-$python_ver ${WORKON_HOME}/${DJANGO_ENV_NAME}-$python_ver
+  else
+    echo "ERROR-16: Couldn't link project envs folder to our own virtualenv!"
+    echo "ln -s ${DJANGO_ENV_HOME}/${DJANGO_ENV_NAME}-$python_ver ${WORKON_HOME}/${DJANGO_ENV_NAME}-$python_ver"
+    exit 1
+  fi
+
+  if [ -z "${PYTHON_REQUIREMENT_FILE+x}" ]; then
+    echo "ERROR-17: .env does not define the PYTHON_REQUIREMENT_FILE variable!"
+    exit 1
+  fi
+
+  # Upgrade pip if needed
+  $SHELL -c "PYENV_VIRTUALENV_DISABLE_PROMPT=1 \
+    PYENV_VIRTUALENVWRAPPER_PREFER_PYVENV='true' \
+    PATH=\"\$PYENV_ROOT/bin:\$PATH\" \
+    eval \"\$(pyenv init -)\"; \
+    eval \"\$(pyenv virtualenv-init -)\"; \
+    pyenv shell $python_ver; \
+    source \$(pyenv which virtualenvwrapper.sh); \
+    workon ${DJANGO_ENV_NAME}-$python_ver; \
+    TMP=$HOME/tmp pip install pip -U; \
+  "
+  # Install packages
+  $SHELL -c "PYENV_ROOT=\"\${PYENV_ROOT}\" \
+    PYENV_VIRTUALENV_DISABLE_PROMPT=1 \
+    PYENV_VIRTUALENVWRAPPER_PREFER_PYVENV='true' \
+    PATH=\"\$PYENV_ROOT/bin:\$PATH\" \
+    eval \"\$(pyenv init -)\"; \
+    eval \"\$(pyenv virtualenv-init -)\"; \
+    pyenv shell $python_ver; \
+    source \$(pyenv which virtualenvwrapper.sh); \
+    workon ${DJANGO_ENV_NAME}-$python_ver; \
+    TMP=$HOME/tmp pip install -r $PYTHON_REQUIREMENT_FILE --no-cache --src \${VIRTUAL_ENV}/src; \
+  "
+  # Install the no-deps modules
+  if [[ -n "${PYTHON_REQUIREMENT_NODEPS_FILE+x}" && -f "${PYTHON_REQUIREMENT_NODEPS_FILE}" ]]; then
+    echo "No dependencies requirements: ${PYTHON_REQUIREMENT_NODEPS_FILE}"
+    $SHELL -c "PYENV_ROOT=\"\${PYENV_ROOT}\" \
+      PYENV_VIRTUALENV_DISABLE_PROMPT=1 \
+      PYENV_VIRTUALENVWRAPPER_PREFER_PYVENV='true' \
+      PATH=\"\$PYENV_ROOT/bin:\$PATH\" \
+      eval \"\$(pyenv init -)\"; \
+      eval \"\$(pyenv virtualenv-init -)\"; \
+      pyenv shell $python_ver; \
+      source \$(pyenv which virtualenvwrapper.sh); \
+      workon ${DJANGO_ENV_NAME}-$python_ver; \
+      TMP=$HOME/tmp pip install --no-deps -r $PYTHON_REQUIREMENT_NODEPS_FILE --no-cache --src \${VIRTUAL_ENV}/src; \
+    "
+  fi
+
+  # OS Specific requirements.txt
+  PYTHON_REQUIREMENT_FILENAME="$(${BASENAME} $PYTHON_REQUIREMENT_FILE)"
+  OS_REQUIREMENTS_FILE="$(${DIRNAME} $PYTHON_REQUIREMENT_FILE)/${PYTHON_REQUIREMENT_FILENAME%.*}-$OSCLASS.txt"
+  if [[ -f "${OS_REQUIREMENTS_FILE}" ]]; then
+    echo "OS Specific requirements: ${OS_REQUIREMENTS_FILE}"
+    $SHELL -c "PYENV_ROOT=\"\${PYENV_ROOT}\" \
+      PYENV_VIRTUALENV_DISABLE_PROMPT=1 \
+      PYENV_VIRTUALENVWRAPPER_PREFER_PYVENV='true' \
+      PATH=\"\$PYENV_ROOT/bin:\$PATH\" \
+      eval \"\$(pyenv init -)\"; \
+      eval \"\$(pyenv virtualenv-init -)\"; \
+      pyenv shell $python_ver; \
+      source \$(pyenv which virtualenvwrapper.sh); \
+      workon ${DJANGO_ENV_NAME}-$python_ver; \
+      TMP=$HOME/tmp pip install -r $OS_REQUIREMENTS_FILE --no-cache --src \${VIRTUAL_ENV}/src; \
+    "
+  fi
+
+  # Setup virtualenvwrapper hooks
+  mv ${DJANGO_ENV_HOME}/${DJANGO_ENV_NAME}-$python_ver/bin/postactivate ${DJANGO_ENV_HOME}/${DJANGO_ENV_NAME}-$python_ver/bin/postactivate.orig
+  mv ${DJANGO_ENV_HOME}/${DJANGO_ENV_NAME}-$python_ver/bin/postdeactivate ${DJANGO_ENV_HOME}/${DJANGO_ENV_NAME}-$python_ver/bin/postdeactivate.orig
+
+  # Insert our custom project postactivate/postdeactivate scripts
+  ln -s ${PROJECT_POSTACTIVATE} ${DJANGO_ENV_HOME}/${DJANGO_ENV_NAME}-$python_ver/bin/postactivate
+  ln -s ${PROJECT_POSTDEACTIVATE} ${DJANGO_ENV_HOME}/${DJANGO_ENV_NAME}-$python_ver/bin/postdeactivate
+
+done
+
+echo "Initializing Log File"
+LOG_FILE_DIR=`dirname ${LOG_FILE}`
+if [ ! -d ${LOG_FILE_DIR} ]; then
+  mkdir -p ${LOG_FILE_DIR}
+  touch ${LOG_FILE}
+  chown ${FILE_OWNER}:${FILE_GROUP} ${LOG_FILE_DIR}
+  chown ${FILE_OWNER}:${FILE_GROUP} ${LOG_FILE}
+  chmod g+w ${LOG_FILE_DIR} ${LOG_FILE}
+elif [[ ! -f ${LOG_FILE} ]]; then
+  touch ${LOG_FILE}
+  chown ${FILE_OWNER}:${FILE_GROUP} ${LOG_FILE}
+  chmod g+w ${LOG_FILE}
+fi
+
+# Unset the pyenv we used...
+pyenv shell --unset
+
+for python_ver in "${PYENV_VERSIONS[@]}"
+do
+  echo "Finished creating virtualenv ${PROJECT_NAME}-${DEPLOY_TYPE}-${python_ver}"
+  echo "To activate, type: 'workon ${PROJECT_NAME}-${DEPLOY_TYPE}-${python_ver}'"
+  LAST_PY=${python_ver}
+done
+
+# Setup generic linkage
+ln -s ${DJANGO_ENV_HOME}/${DJANGO_ENV_NAME}-$LAST_PY ${DJANGO_ENV_HOME}/${DJANGO_ENV_NAME}
+ln -s ${DJANGO_ENV_HOME}/${DJANGO_ENV_NAME} ${WORKON_HOME}/${DJANGO_ENV_NAME}

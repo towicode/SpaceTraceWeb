@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# placeholder for missing .env things...
+
+function onexit(){ while caller $((n++)); do :; done; }
+trap onexit EXIT
+
+BASENAME=`which basename`
+DIRNAME=`which dirname`
+REALPATH=`which realpath`
+
+ABSOLUTE_PATH=$(cd `${DIRNAME} "${BASH_SOURCE[0]}"` && pwd)/`${BASENAME} "${BASH_SOURCE[0]}"`
+ABSOLUTE_DIR=$(cd `${DIRNAME} "${BASH_SOURCE[0]}"` && pwd)
+
+# Temporary hard coded get project path
+DJANGO_SRC_NAME=bcfsrc
+PROJECT_PATH=$(${REALPATH} ${ABSOLUTE_DIR}/..)
+PROJECT_NAME="webquit"
+DJANGO_PROJECT_ROOT=${PROJECT_PATH}/${DJANGO_SRC_NAME}
+
+
+ask() {
+    # http://djm.me/ask
+    while true; do
+
+        if [ "${2:-}" = "Y" ]; then
+            prompt="Y/n"
+            default=Y
+        elif [ "${2:-}" = "N" ]; then
+            prompt="y/N"
+            default=N
+        else
+            prompt="y/n"
+            default=
+        fi
+
+        # Ask the question - use /dev/tty in case stdin is redirected from somewhere else
+        read -p "$1 [$prompt] " REPLY </dev/tty
+
+        # Default?
+        if [ -z "$REPLY" ]; then
+            REPLY=$default
+        fi
+
+        # Check if the reply is valid
+        case "$REPLY" in
+            Y*|y*) return 0 ;;
+            N*|n*) return 1 ;;
+        esac
+
+    done
+}
