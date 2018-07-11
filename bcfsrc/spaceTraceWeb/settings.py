@@ -12,6 +12,19 @@ https://docs.djangoproject.com/en/2.0/ref/settings/
 
 import os
 
+from unipath import Path
+
+# print("Where are we right now: {}".format(Path(__file__)), file=sys.stderr)
+# print("and bin dir: {}".format(Path(__file__).ancestor(3).child('bin')), file=sys.stderr)
+
+# Magic environmental variable importer (loads project .env)
+os.sys.path.append(Path(__file__).ancestor(3).child('bin'))
+# IMPORT ALL ENV VARS
+# from pylib_bcf.load_env_vars import *
+from pylib_bcf.load_env_vars import (
+    PROJECT_NAME, DEPLOY_TYPE, SECRET_KEY,
+)
+
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
